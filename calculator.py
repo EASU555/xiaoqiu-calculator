@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ctypes
+import json
+import os
 import re
 import sys
 import tkinter as tk
@@ -18,14 +20,121 @@ import customtkinter as ctk
 
 
 DEFAULT_DIVISOR = "475"
+DEFAULT_COUNTER_HOTKEY = "space"
+DEFAULT_COUNTER_HOTKEY_CODE = 32
 MAX_INPUT_LENGTH = 64
 MAX_RESULT_LENGTH = 24
 CALCULATION_PRECISION = MAX_INPUT_LENGTH * 3
 NUMBER_PATTERN = re.compile(r"-?(?:\d+(?:\.\d*)?|\.\d+)$")
 EDITING_PATTERN = re.compile(r"^-?(?:\d*(?:\.\d*)?)?$")
+HOTKEY_PATTERN = re.compile(r"^[^\s<>]{1,64}$", re.UNICODE)
+
+RESERVED_HOTKEYS = frozenset(
+    {
+        "return",
+        "kp_enter",
+        "escape",
+        "tab",
+        "iso_left_tab",
+        "shift_l",
+        "shift_r",
+        "control_l",
+        "control_r",
+        "alt_l",
+        "alt_r",
+        "meta_l",
+        "meta_r",
+        "super_l",
+        "super_r",
+        "win_l",
+        "win_r",
+        "caps_lock",
+        "num_lock",
+        "scroll_lock",
+        "menu",
+    }
+)
+
+# Windows virtual-key codes reserved for navigation or existing app commands.
+RESERVED_KEYCODES = frozenset(
+    {
+        9,   # Tab
+        13,  # Enter
+        16,  # Shift
+        17,  # Ctrl
+        18,  # Alt
+        20,  # Caps Lock
+        27,  # Escape
+        91,  # Left Windows
+        92,  # Right Windows
+        93,  # Menu
+        144, # Num Lock
+        145, # Scroll Lock
+    }
+)
+
+HOTKEY_DISPLAY_NAMES = {
+    "space": "Space",
+    "backspace": "Backspace",
+    "delete": "Delete",
+    "insert": "Insert",
+    "home": "Home",
+    "end": "End",
+    "prior": "Page Up",
+    "next": "Page Down",
+    "left": "←",
+    "right": "→",
+    "up": "↑",
+    "down": "↓",
+    "kp_add": "Num +",
+    "kp_subtract": "Num −",
+    "kp_multiply": "Num ×",
+    "kp_divide": "Num ÷",
+    "kp_decimal": "Num .",
+}
+
+KEYCODE_DISPLAY_NAMES = {
+    8: "Backspace",
+    19: "Pause",
+    32: "Space",
+    33: "Page Up",
+    34: "Page Down",
+    35: "End",
+    36: "Home",
+    37: "←",
+    38: "↑",
+    39: "→",
+    40: "↓",
+    45: "Insert",
+    46: "Delete",
+    106: "Num ×",
+    107: "Num +",
+    109: "Num −",
+    110: "Num .",
+    111: "Num ÷",
+    186: ";",
+    187: "=",
+    188: ",",
+    189: "−",
+    190: ".",
+    191: "/",
+    192: "`",
+    219: "[",
+    220: "\\",
+    221: "]",
+    222: "'",
+}
+KEYCODE_DISPLAY_NAMES.update({code: chr(code) for code in range(48, 58)})
+KEYCODE_DISPLAY_NAMES.update({code: chr(code) for code in range(65, 91)})
+KEYCODE_DISPLAY_NAMES.update(
+    {code: f"Num {code - 96}" for code in range(96, 106)}
+)
+KEYCODE_DISPLAY_NAMES.update(
+    {code: f"F{code - 111}" for code in range(112, 136)}
+)
 
 WINDOW_WIDTH = 500
-WINDOW_HEIGHT = 600
+WINDOW_HEIGHT = 620
 
 # Neutral graphite surfaces with a restrained burnt-orange accent.
 APP_BG = "#0D0F12"
@@ -136,25 +245,180 @@ def calculate_values(
     return format_result(total), format_result(divided)
 
 
+def increment_counter_value(current: int) -> int:
+    """Return the next counter value for one click or shortcut press."""
+    return current + 1
+
+
+def normalize_hotkey(keysym: str) -> str | None:
+    """Validate and normalize one Tk key symbol for counter binding."""
+    if not isinstance(keysym, str):
+        return None
+    candidate = keysym.strip()
+    if not HOTKEY_PATTERN.fullmatch(candidate):
+        return None
+    if candidate.lower() in RESERVED_HOTKEYS:
+        return None
+    return candidate.lower() if len(candidate) == 1 else candidate
+
+
+def normalize_keycode(keycode: object) -> int | None:
+    """Return a usable Windows/Tk keycode without treating it as text."""
+    try:
+        normalized = int(keycode)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if not 1 <= normalized <= 65535:
+        return None
+    return normalized
+
+
+def hotkey_is_reserved(keysym: str, keycode: object = None) -> bool:
+    """Protect app commands and system navigation from being overwritten."""
+    lowered = keysym.strip().lower() if isinstance(keysym, str) else ""
+    normalized_code = normalize_keycode(keycode)
+    return lowered in RESERVED_HOTKEYS or normalized_code in RESERVED_KEYCODES
+
+
+def hotkey_display_name(keysym: str, keycode: object = None) -> str:
+    """Return a compact user-facing name for a normalized key symbol."""
+    normalized_code = normalize_keycode(keycode)
+    if normalized_code in KEYCODE_DISPLAY_NAMES:
+        return KEYCODE_DISPLAY_NAMES[normalized_code]
+
+    normalized = normalize_hotkey(keysym)
+    if normalized is None or normalized.lower().startswith("keycode_"):
+        if normalized_code is not None:
+            return f"按键 {normalized_code}"
+        normalized = DEFAULT_COUNTER_HOTKEY
+    lowered = normalized.lower()
+    if lowered in HOTKEY_DISPLAY_NAMES:
+        return HOTKEY_DISPLAY_NAMES[lowered]
+    if len(normalized) == 1:
+        return normalized.upper()
+    if lowered.startswith("kp_"):
+        return "Num " + normalized[3:].replace("_", " ").title()
+    return normalized.replace("_", " ").title()
+
+
+def hotkey_matches_event(
+    saved_keysym: str,
+    saved_keycode: object,
+    event_keysym: str,
+    event_keycode: object,
+) -> bool:
+    """Match by keycode first, with a keysym fallback for legacy settings."""
+    expected_code = normalize_keycode(saved_keycode)
+    actual_code = normalize_keycode(event_keycode)
+    if expected_code is not None and actual_code is not None:
+        return expected_code == actual_code
+
+    expected_symbol = normalize_hotkey(saved_keysym)
+    actual_symbol = normalize_hotkey(event_keysym)
+    return (
+        expected_symbol is not None
+        and actual_symbol is not None
+        and expected_symbol.casefold() == actual_symbol.casefold()
+    )
+
+
+def settings_file_path() -> Path:
+    """Return the per-user settings file path without touching the filesystem."""
+    app_data = os.environ.get("APPDATA")
+    base = Path(app_data) if app_data else Path.home() / ".config"
+    return base / "XiaoqiuCalculator" / "settings.json"
+
+
+def load_counter_hotkey_binding(
+    path: Path | None = None,
+) -> tuple[str, int | None]:
+    """Load a saved keysym/keycode pair and migrate legacy settings safely."""
+    target = path or settings_file_path()
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+        normalized = normalize_hotkey(payload.get("counter_hotkey", ""))
+        keycode = normalize_keycode(payload.get("counter_hotkey_code"))
+    except (OSError, ValueError, AttributeError):
+        normalized = None
+        keycode = None
+
+    if hotkey_is_reserved(normalized or "", keycode):
+        normalized = None
+        keycode = None
+    if normalized is None and keycode is not None:
+        normalized = f"keycode_{keycode}"
+    if normalized is None:
+        return DEFAULT_COUNTER_HOTKEY, DEFAULT_COUNTER_HOTKEY_CODE
+    return normalized, keycode
+
+
+def load_counter_hotkey(path: Path | None = None) -> str:
+    """Load the saved hotkey symbol for callers using the legacy API."""
+    return load_counter_hotkey_binding(path)[0]
+
+
+def save_counter_hotkey(
+    keysym: str,
+    path: Path | None = None,
+    *,
+    keycode: object = None,
+) -> str:
+    """Atomically persist one validated counter hotkey."""
+    normalized = normalize_hotkey(keysym)
+    normalized_code = normalize_keycode(keycode)
+    if hotkey_is_reserved(keysym, normalized_code):
+        raise ValueError("该按键不能用作计数快捷键。")
+    if normalized is None and normalized_code is not None:
+        normalized = f"keycode_{normalized_code}"
+    if normalized is None:
+        raise ValueError("未能识别该按键，请换一个按键重试。")
+
+    target = path or settings_file_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(".tmp")
+    payload: dict[str, str | int] = {"counter_hotkey": normalized}
+    if normalized_code is not None:
+        payload["counter_hotkey_code"] = normalized_code
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(target)
+    return normalized
+
+
 class CalculatorApp(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("A+B 计算器")
+        self.title("小秋计算器")
         self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
-        self.minsize(460, 590)
+        self.minsize(460, 600)
         self.resizable(True, False)
         self.configure(fg_color=APP_BG)
 
         self.font_family = self._choose_font_family()
+        self._current_page = "calculator"
         self.a_value = tk.StringVar()
         self.b_value = tk.StringVar()
         self.divisor_value = tk.StringVar(value=DEFAULT_DIVISOR)
         self.total_result = tk.StringVar(value="—")
         self.divide_result = tk.StringVar(value="—")
         self.divide_formula = tk.StringVar(value=f"B ÷ {DEFAULT_DIVISOR}")
-        self.status_text = tk.StringVar(value="输入 A、B，可按需修改右上角除数。")
+        self.counter_value = tk.IntVar(value=0)
+        (
+            self.counter_hotkey,
+            self.counter_hotkey_code,
+        ) = load_counter_hotkey_binding()
+        self.page_subtitle = tk.StringVar(value="双结果计算")
+        self.shortcut_text = tk.StringVar(value=self._shortcut_summary())
+        self._page_status: dict[str, tuple[str, str]] = {
+            "calculator": ("输入 A、B，可按需修改除数。", "neutral"),
+            "counter": ("按 +1 或已绑定快捷键开始计数。", "neutral"),
+        }
+        self.status_text = tk.StringVar(value=self._page_status["calculator"][0])
         self._invalid_entries: set[ctk.CTkEntry] = set()
         self._focused_entry: ctk.CTkEntry | None = None
+        self._capturing_hotkey = False
 
         self._create_app_icon()
         self._create_fonts()
@@ -187,6 +451,9 @@ class CalculatorApp(ctk.CTk):
         self.result_font = ctk.CTkFont(self.font_family, 23, "bold")
         self.result_medium_font = ctk.CTkFont(self.font_family, 18, "bold")
         self.result_compact_font = ctk.CTkFont(self.font_family, 14, "bold")
+        self.counter_font = ctk.CTkFont(self.font_family, 54, "bold")
+        self.counter_medium_font = ctk.CTkFont(self.font_family, 42, "bold")
+        self.counter_compact_font = ctk.CTkFont(self.font_family, 30, "bold")
 
     def _create_app_icon(self) -> None:
         try:
@@ -241,11 +508,27 @@ class CalculatorApp(ctk.CTk):
         content = ctk.CTkFrame(self, fg_color="transparent")
         content.grid(row=0, column=0, sticky="nsew", padx=24, pady=(22, 18))
         content.grid_columnconfigure(0, weight=1)
+        content.grid_rowconfigure(1, weight=1)
 
         self._build_header(content)
-        self._build_input_card(content)
-        self._build_actions(content)
-        self._build_results(content)
+        page_host = ctk.CTkFrame(content, fg_color="transparent")
+        page_host.grid(row=1, column=0, sticky="nsew")
+        page_host.grid_columnconfigure(0, weight=1)
+        page_host.grid_rowconfigure(0, weight=1)
+
+        self.calculator_page = ctk.CTkFrame(page_host, fg_color="transparent")
+        self.calculator_page.grid(row=0, column=0, sticky="nsew")
+        self.calculator_page.grid_columnconfigure(0, weight=1)
+        self._build_input_card(self.calculator_page)
+        self._build_actions(self.calculator_page)
+        self._build_results(self.calculator_page)
+
+        self.counter_page = ctk.CTkFrame(page_host, fg_color="transparent")
+        self.counter_page.grid(row=0, column=0, sticky="nsew")
+        self.counter_page.grid_columnconfigure(0, weight=1)
+        self._build_counter_page(self.counter_page)
+
+        self.calculator_page.tkraise()
         self._build_status(content)
 
     def _build_header(self, parent: ctk.CTkFrame) -> None:
@@ -273,34 +556,70 @@ class CalculatorApp(ctk.CTk):
 
         ctk.CTkLabel(
             header,
-            text="双结果计算器",
+            text="小秋计算器",
             font=self.title_font,
             text_color=TEXT,
             anchor="w",
         ).grid(row=0, column=1, sticky="w")
         ctk.CTkLabel(
             header,
-            text="一次输入，同时得到总数与除法结果",
+            textvariable=self.page_subtitle,
             font=self.subtitle_font,
             text_color=MUTED,
             anchor="w",
         ).grid(row=1, column=1, sticky="w", pady=(1, 0))
 
-        divisor_control = ctk.CTkFrame(header, fg_color="transparent")
-        divisor_control.grid(
+        self.page_switch_button = ctk.CTkButton(
+            header,
+            text="快捷计数  →",
+            width=108,
+            height=36,
+            corner_radius=9,
+            border_width=1,
+            border_color=ACCENT_BORDER,
+            fg_color=ACCENT_SOFT,
+            hover_color=ACCENT_BORDER,
+            text_color=ACCENT,
+            font=self.body_font,
+            command=self.toggle_page,
+        )
+        self.page_switch_button.grid(
             row=0,
             column=2,
             rowspan=2,
             sticky="e",
             padx=(10, 0),
         )
+
+    def _build_input_card(self, parent: ctk.CTkFrame) -> None:
+        card = ctk.CTkFrame(
+            parent,
+            corner_radius=16,
+            fg_color=SURFACE,
+            border_width=1,
+            border_color=BORDER,
+        )
+        card.grid(row=0, column=0, sticky="ew")
+        card.grid_columnconfigure(0, weight=1)
+
+        card_header = ctk.CTkFrame(card, fg_color="transparent")
+        card_header.grid(row=0, column=0, sticky="ew", padx=18, pady=(15, 10))
+        card_header.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            card_header,
+            text="输入数据",
+            font=self.section_font,
+            text_color=TEXT,
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w")
+        divisor_control = ctk.CTkFrame(card_header, fg_color="transparent")
+        divisor_control.grid(row=0, column=1, sticky="e")
         ctk.CTkLabel(
             divisor_control,
-            text="可调除数",
-            height=13,
-            text_color=FAINT,
+            text="除数",
             font=self.caption_font,
-        ).grid(row=0, column=0, sticky="e", pady=(0, 2))
+            text_color=FAINT,
+        ).grid(row=0, column=0, padx=(0, 7))
         self.divisor_entry = ctk.CTkEntry(
             divisor_control,
             width=82,
@@ -318,36 +637,7 @@ class CalculatorApp(ctk.CTk):
             validate="key",
             validatecommand=(self.register(self._validate_input), "%P"),
         )
-        self.divisor_entry.grid(row=1, column=0, sticky="e")
-
-    def _build_input_card(self, parent: ctk.CTkFrame) -> None:
-        card = ctk.CTkFrame(
-            parent,
-            corner_radius=16,
-            fg_color=SURFACE,
-            border_width=1,
-            border_color=BORDER,
-        )
-        card.grid(row=1, column=0, sticky="ew")
-        card.grid_columnconfigure(0, weight=1)
-
-        card_header = ctk.CTkFrame(card, fg_color="transparent")
-        card_header.grid(row=0, column=0, sticky="ew", padx=18, pady=(15, 10))
-        card_header.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(
-            card_header,
-            text="输入数据",
-            font=self.section_font,
-            text_color=TEXT,
-            anchor="w",
-        ).grid(row=0, column=0, sticky="w")
-        ctk.CTkLabel(
-            card_header,
-            text="支持正负整数与小数",
-            font=self.caption_font,
-            text_color=FAINT,
-            anchor="e",
-        ).grid(row=0, column=1, sticky="e")
+        self.divisor_entry.grid(row=0, column=1)
 
         fields = ctk.CTkFrame(card, fg_color="transparent")
         fields.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 17))
@@ -426,7 +716,7 @@ class CalculatorApp(ctk.CTk):
 
     def _build_actions(self, parent: ctk.CTkFrame) -> None:
         actions = ctk.CTkFrame(parent, fg_color="transparent")
-        actions.grid(row=2, column=0, sticky="ew", pady=(14, 17))
+        actions.grid(row=1, column=0, sticky="ew", pady=(14, 17))
         actions.grid_columnconfigure(0, weight=1)
         actions.grid_columnconfigure(1, weight=2)
 
@@ -458,9 +748,152 @@ class CalculatorApp(ctk.CTk):
         )
         self.calculate_button.grid(row=0, column=1, sticky="ew", padx=(5, 0))
 
+    def _build_counter_page(self, parent: ctk.CTkFrame) -> None:
+        intro = ctk.CTkFrame(parent, fg_color="transparent")
+        intro.grid(row=0, column=0, sticky="ew", pady=(1, 12))
+        intro.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            intro,
+            text="快捷计数",
+            font=self.section_font,
+            text_color=TEXT,
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(
+            intro,
+            text="每按一次快捷键，计数增加 1",
+            font=self.caption_font,
+            text_color=FAINT,
+            anchor="e",
+        ).grid(row=0, column=1, sticky="e")
+
+        counter = ctk.CTkFrame(
+            parent,
+            height=220,
+            corner_radius=16,
+            fg_color=SURFACE,
+            border_width=1,
+            border_color=ACCENT_BORDER,
+        )
+        counter.grid(row=1, column=0, sticky="ew")
+        counter.grid_columnconfigure(0, weight=1)
+        counter.grid_propagate(False)
+
+        ctk.CTkLabel(
+            counter,
+            text="当前计数",
+            font=self.caption_font,
+            text_color=FAINT,
+        ).grid(row=0, column=0, pady=(22, 0))
+
+        self.counter_value_label = ctk.CTkLabel(
+            counter,
+            textvariable=self.counter_value,
+            font=self.counter_font,
+            text_color=ACCENT,
+            anchor="center",
+        )
+        self.counter_value_label.grid(row=1, column=0, sticky="ew", pady=(3, 10))
+
+        counter_actions = ctk.CTkFrame(counter, fg_color="transparent")
+        counter_actions.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 22))
+        counter_actions.grid_columnconfigure(0, weight=1)
+        counter_actions.grid_columnconfigure(1, weight=2)
+
+        self.counter_reset_button = ctk.CTkButton(
+            counter_actions,
+            text="清零",
+            height=48,
+            corner_radius=10,
+            border_width=1,
+            border_color=BORDER,
+            fg_color=SURFACE_ALT,
+            hover_color=BORDER,
+            text_color=TEXT,
+            font=self.body_font,
+            command=self.reset_counter,
+        )
+        self.counter_reset_button.grid(
+            row=0,
+            column=0,
+            sticky="ew",
+            padx=(0, 6),
+        )
+
+        self.counter_increment_button = ctk.CTkButton(
+            counter_actions,
+            text="计数 +1",
+            height=48,
+            corner_radius=10,
+            fg_color=ACCENT,
+            hover_color=ACCENT_HOVER,
+            text_color=ACCENT_TEXT,
+            font=self.button_font,
+            command=self.increment_counter,
+        )
+        self.counter_increment_button.grid(
+            row=0,
+            column=1,
+            sticky="ew",
+            padx=(6, 0),
+        )
+
+        hotkey_card = ctk.CTkFrame(
+            parent,
+            height=76,
+            corner_radius=14,
+            fg_color=SURFACE,
+            border_width=1,
+            border_color=BORDER,
+        )
+        hotkey_card.grid(row=2, column=0, sticky="ew", pady=(14, 0))
+        hotkey_card.grid_columnconfigure(0, weight=1)
+        hotkey_card.grid_propagate(False)
+
+        hotkey_description = ctk.CTkFrame(
+            hotkey_card,
+            fg_color="transparent",
+        )
+        hotkey_description.grid(row=0, column=0, sticky="w", padx=(18, 8))
+        ctk.CTkLabel(
+            hotkey_description,
+            text="计数快捷键",
+            font=self.label_font,
+            text_color=TEXT,
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(
+            hotkey_description,
+            text="点击右侧按钮后，按下目标键",
+            font=self.caption_font,
+            text_color=FAINT,
+            anchor="w",
+        ).grid(row=1, column=0, sticky="w", pady=(3, 0))
+
+        self.hotkey_button = ctk.CTkButton(
+            hotkey_card,
+            text=self._hotkey_button_text(),
+            width=154,
+            height=40,
+            corner_radius=9,
+            border_width=1,
+            border_color=BORDER,
+            fg_color=SURFACE_ALT,
+            hover_color=BORDER,
+            font=self.caption_font,
+            text_color=MUTED,
+            command=self.start_hotkey_capture,
+        )
+        self.hotkey_button.grid(
+            row=0,
+            column=1,
+            sticky="e",
+            padx=(8, 18),
+        )
+
     def _build_results(self, parent: ctk.CTkFrame) -> None:
         section_header = ctk.CTkFrame(parent, fg_color="transparent")
-        section_header.grid(row=3, column=0, sticky="ew", pady=(0, 7))
+        section_header.grid(row=2, column=0, sticky="ew", pady=(0, 7))
         section_header.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             section_header,
@@ -478,7 +911,7 @@ class CalculatorApp(ctk.CTk):
         ).grid(row=0, column=1, sticky="e")
 
         results = ctk.CTkFrame(parent, fg_color="transparent")
-        results.grid(row=4, column=0, sticky="ew")
+        results.grid(row=3, column=0, sticky="ew")
         results.grid_columnconfigure(0, weight=1)
 
         self.total_card, self.total_value_label = self._add_result_card(
@@ -600,7 +1033,7 @@ class CalculatorApp(ctk.CTk):
             corner_radius=10,
             fg_color=SURFACE_ALT,
         )
-        self.status_frame.grid(row=5, column=0, sticky="ew", pady=(12, 0))
+        self.status_frame.grid(row=2, column=0, sticky="ew", pady=(12, 0))
         self.status_frame.grid_columnconfigure(1, weight=1)
         self.status_frame.grid_propagate(False)
 
@@ -623,31 +1056,256 @@ class CalculatorApp(ctk.CTk):
 
         ctk.CTkLabel(
             parent,
-            text="Enter 计算   ·   Esc 清空",
+            textvariable=self.shortcut_text,
             font=self.caption_font,
             text_color=FAINT,
             anchor="e",
-        ).grid(row=6, column=0, sticky="e", pady=(6, 0))
+        ).grid(row=3, column=0, sticky="e", pady=(6, 0))
 
     def _bind_interactions(self) -> None:
         self.a_value.trace_add("write", self._on_input_change)
         self.b_value.trace_add("write", self._on_input_change)
         self.divisor_value.trace_add("write", self._on_input_change)
-        self.bind("<Return>", lambda _event: self.calculate())
-        self.bind("<Escape>", lambda _event: self.clear())
+        self.bind("<KeyPress>", self._handle_keypress)
 
         for entry in (self.a_entry, self.b_entry, self.divisor_entry):
             entry.bind("<FocusIn>", lambda _event, item=entry: self._focus_entry(item))
             entry.bind("<FocusOut>", lambda _event, item=entry: self._blur_entry(item))
 
         self.a_entry.bind("<Tab>", self._focus_b_from_keyboard)
-        self.a_entry.bind("<Shift-Tab>", self._focus_divisor_from_keyboard)
+        self.a_entry.bind("<Shift-Tab>", self._focus_switch_from_keyboard)
         self.b_entry.bind("<Tab>", self._focus_divisor_from_keyboard)
         self.b_entry.bind("<Shift-Tab>", self._focus_a_from_keyboard)
-        self.divisor_entry.bind("<Tab>", self._focus_a_from_keyboard)
+        self.divisor_entry.bind("<Tab>", self._focus_switch_from_keyboard)
         self.divisor_entry.bind("<Shift-Tab>", self._focus_b_from_keyboard)
 
+        self.page_switch_button.bind("<Tab>", self._focus_page_start_from_keyboard)
+        self.page_switch_button.bind(
+            "<Shift-Tab>",
+            self._focus_page_end_from_keyboard,
+        )
+        self.counter_reset_button.bind(
+            "<Tab>",
+            lambda _event: self._focus_widget(self.counter_increment_button),
+        )
+        self.counter_reset_button.bind(
+            "<Shift-Tab>",
+            self._focus_switch_from_keyboard,
+        )
+        self.counter_increment_button.bind(
+            "<Tab>",
+            lambda _event: self._focus_widget(self.hotkey_button),
+        )
+        self.counter_increment_button.bind(
+            "<Shift-Tab>",
+            lambda _event: self._focus_widget(self.counter_reset_button),
+        )
+        self.hotkey_button.bind("<Tab>", self._focus_switch_from_keyboard)
+        self.hotkey_button.bind(
+            "<Shift-Tab>",
+            lambda _event: self._focus_widget(self.counter_increment_button),
+        )
+
         self.a_entry.focus_set()
+
+    def toggle_page(self) -> None:
+        if self._current_page == "calculator":
+            self.show_counter_page()
+        else:
+            self.show_calculator_page()
+
+    def show_calculator_page(self) -> None:
+        if self._capturing_hotkey:
+            self.cancel_hotkey_capture()
+        self._current_page = "calculator"
+        self.calculator_page.tkraise()
+        self.page_subtitle.set("双结果计算")
+        self.page_switch_button.configure(text="快捷计数  →")
+        self.shortcut_text.set(self._shortcut_summary())
+        self._restore_page_status()
+        self.a_entry.focus_set()
+
+    def show_counter_page(self) -> None:
+        self._current_page = "counter"
+        self.counter_page.tkraise()
+        self.page_subtitle.set("独立快捷计数")
+        self.page_switch_button.configure(text="←  返回计算")
+        self.shortcut_text.set(self._shortcut_summary())
+        self._restore_page_status()
+        self.counter_increment_button.focus_set()
+
+    def _handle_keypress(self, event: tk.Event) -> str | None:
+        keysym = str(event.keysym)
+        keycode = normalize_keycode(event.keycode)
+        lowered = keysym.lower()
+
+        if self._capturing_hotkey:
+            if lowered == "escape" or keycode == 27:
+                self.cancel_hotkey_capture()
+                return "break"
+            if hotkey_is_reserved(keysym, keycode):
+                self._show_invalid_hotkey_prompt()
+                return "break"
+
+            normalized = normalize_hotkey(keysym)
+            if normalized is None and keycode is not None:
+                normalized = f"keycode_{keycode}"
+            if normalized is None:
+                self._show_invalid_hotkey_prompt()
+                return "break"
+            self._apply_counter_hotkey(normalized, keycode)
+            return "break"
+
+        if self._current_page == "calculator":
+            if lowered in {"return", "kp_enter"}:
+                if self._focus_is_within(self.page_switch_button):
+                    self.show_counter_page()
+                else:
+                    self.calculate()
+                return "break"
+            if lowered == "escape":
+                self.clear()
+                return "break"
+            return None
+
+        if lowered == "escape":
+            self.show_calculator_page()
+            return "break"
+
+        if lowered in {"return", "kp_enter"}:
+            if self._focus_is_within(self.page_switch_button):
+                self.show_calculator_page()
+            elif self._focus_is_within(self.counter_reset_button):
+                self.reset_counter()
+            elif self._focus_is_within(self.hotkey_button):
+                self.start_hotkey_capture()
+            else:
+                self.increment_counter()
+            return "break"
+
+        if (
+            hotkey_matches_event(
+                self.counter_hotkey,
+                self.counter_hotkey_code,
+                keysym,
+                keycode,
+            )
+            and not self._focus_is_text_input()
+        ):
+            self.increment_counter()
+            return "break"
+        return None
+
+    def _focus_is_text_input(self) -> bool:
+        focused = self.focus_get()
+        return focused is not None and focused.winfo_class() in {
+            "Entry",
+            "Text",
+            "TEntry",
+        }
+
+    def _focus_is_within(self, widget: tk.Misc) -> bool:
+        focused = self.focus_get()
+        while focused is not None:
+            if focused is widget:
+                return True
+            focused = getattr(focused, "master", None)
+        return False
+
+    def _hotkey_button_text(self) -> str:
+        display = hotkey_display_name(
+            self.counter_hotkey,
+            self.counter_hotkey_code,
+        )
+        return f"快捷键：{display}"
+
+    def _shortcut_summary(self) -> str:
+        display = hotkey_display_name(
+            self.counter_hotkey,
+            self.counter_hotkey_code,
+        )
+        if self._current_page == "counter":
+            return f"{display} +1   ·   Esc 返回计算器"
+        return "Enter 计算   ·   Esc 清空"
+
+    def start_hotkey_capture(self) -> None:
+        self._capturing_hotkey = True
+        self.hotkey_button.configure(
+            text="请按一个键（Esc 取消）",
+            border_color=ACCENT_BORDER,
+            fg_color=ACCENT_SOFT,
+            text_color=ACCENT,
+        )
+        self.hotkey_button.focus_set()
+
+    def cancel_hotkey_capture(self) -> None:
+        self._capturing_hotkey = False
+        self._restore_hotkey_button()
+        self.hotkey_button.focus_set()
+
+    def _show_invalid_hotkey_prompt(self) -> None:
+        self.hotkey_button.configure(text="此键用于系统操作，请换一个")
+        self.after(1200, self._restore_capture_prompt)
+
+    def _restore_capture_prompt(self) -> None:
+        if self._capturing_hotkey:
+            self.hotkey_button.configure(text="请按一个键（Esc 取消）")
+
+    def _apply_counter_hotkey(
+        self,
+        keysym: str,
+        keycode: int | None,
+    ) -> None:
+        self.counter_hotkey = keysym
+        self.counter_hotkey_code = keycode
+        self._capturing_hotkey = False
+        self.shortcut_text.set(self._shortcut_summary())
+        self._restore_hotkey_button()
+
+        display = hotkey_display_name(keysym, keycode)
+        try:
+            save_counter_hotkey(keysym, keycode=keycode)
+        except (OSError, ValueError):
+            self._set_status(
+                f"快捷键 {display} 已生效，但无法保存到本机。",
+                tone="error",
+            )
+        else:
+            self._set_status(
+                f"计数快捷键已设置为 {display}，并已自动保存。",
+                tone="success",
+            )
+        self.counter_increment_button.focus_set()
+
+    def _restore_hotkey_button(self) -> None:
+        self.hotkey_button.configure(
+            text=self._hotkey_button_text(),
+            border_color=BORDER,
+            fg_color=SURFACE_ALT,
+            text_color=FAINT,
+        )
+
+    def increment_counter(self) -> None:
+        value = increment_counter_value(self.counter_value.get())
+        self.counter_value.set(value)
+        self._style_counter_label(value)
+        self.counter_increment_button.focus_set()
+
+    def reset_counter(self) -> None:
+        self.counter_value.set(0)
+        self._style_counter_label(0)
+        self._set_status("计数器已清零，可以重新开始计数。", tone="neutral")
+        self.counter_reset_button.focus_set()
+
+    def _style_counter_label(self, value: int) -> None:
+        length = len(str(value))
+        if length <= 6:
+            font = self.counter_font
+        elif length <= 10:
+            font = self.counter_medium_font
+        else:
+            font = self.counter_compact_font
+        self.counter_value_label.configure(font=font)
 
     def _validate_input(self, proposed: str) -> bool:
         return (
@@ -665,6 +1323,24 @@ class CalculatorApp(ctk.CTk):
 
     def _focus_divisor_from_keyboard(self, _event: tk.Event) -> str:
         self.divisor_entry.focus_set()
+        return "break"
+
+    def _focus_switch_from_keyboard(self, _event: tk.Event) -> str:
+        return self._focus_widget(self.page_switch_button)
+
+    def _focus_page_start_from_keyboard(self, _event: tk.Event) -> str:
+        if self._current_page == "calculator":
+            return self._focus_widget(self.a_entry)
+        return self._focus_widget(self.counter_reset_button)
+
+    def _focus_page_end_from_keyboard(self, _event: tk.Event) -> str:
+        if self._current_page == "calculator":
+            return self._focus_widget(self.divisor_entry)
+        return self._focus_widget(self.hotkey_button)
+
+    @staticmethod
+    def _focus_widget(widget: tk.Misc) -> str:
+        widget.focus_set()
         return "break"
 
     def _focus_entry(self, entry: ctk.CTkEntry) -> None:
@@ -694,11 +1370,19 @@ class CalculatorApp(ctk.CTk):
         self.divide_result.set("—")
         self._reset_result_labels()
         self._set_status(
-            "输入 A、B，可按需修改右上角除数。",
+            "输入 A、B，可按需修改除数。",
             tone="neutral",
         )
 
     def _set_status(self, message: str, tone: str) -> None:
+        self._page_status[self._current_page] = (message, tone)
+        self._render_status(message, tone)
+
+    def _restore_page_status(self) -> None:
+        message, tone = self._page_status[self._current_page]
+        self._render_status(message, tone)
+
+    def _render_status(self, message: str, tone: str) -> None:
         palette = {
             "neutral": (SURFACE_ALT, MUTED),
             "success": (SUCCESS_SOFT, SUCCESS),
