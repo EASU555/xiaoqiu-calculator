@@ -20,6 +20,7 @@ import customtkinter as ctk
 
 
 DEFAULT_DIVISOR = "475"
+FIXED_MULTIPLIER = Decimal("475")
 DEFAULT_COUNTER_HOTKEY = "space"
 DEFAULT_COUNTER_HOTKEY_CODE = 32
 MAX_INPUT_LENGTH = 64
@@ -134,7 +135,7 @@ KEYCODE_DISPLAY_NAMES.update(
 )
 
 WINDOW_WIDTH = 500
-WINDOW_HEIGHT = 620
+WINDOW_HEIGHT = 660
 
 # Neutral graphite surfaces with a restrained burnt-orange accent.
 APP_BG = "#0D0F12"
@@ -243,6 +244,22 @@ def calculate_values(
     except DecimalException as exc:
         raise CalculationRangeError("数值超出可计算范围，请调整输入。") from exc
     return format_result(total), format_result(divided)
+
+
+def calculate_multiply_add_value(
+    multiplier_text: str,
+    addend_text: str,
+) -> str:
+    """Return the display value for 475 × multiplier + addend."""
+    multiplier = parse_number(multiplier_text, "乘数")
+    addend = parse_number(addend_text, "加数")
+    try:
+        with localcontext() as context:
+            context.prec = CALCULATION_PRECISION
+            result = FIXED_MULTIPLIER * multiplier + addend
+    except DecimalException as exc:
+        raise CalculationRangeError("数值超出可计算范围，请调整输入。") from exc
+    return format_result(result)
 
 
 def increment_counter_value(current: int) -> int:
@@ -392,18 +409,23 @@ class CalculatorApp(ctk.CTk):
         super().__init__()
         self.title("小秋计算器")
         self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
-        self.minsize(460, 600)
+        self.minsize(460, 640)
         self.resizable(True, False)
         self.configure(fg_color=APP_BG)
 
         self.font_family = self._choose_font_family()
         self._current_page = "calculator"
+        self._current_calculation_mode = "standard"
         self.a_value = tk.StringVar()
         self.b_value = tk.StringVar()
         self.divisor_value = tk.StringVar(value=DEFAULT_DIVISOR)
         self.total_result = tk.StringVar(value="—")
         self.divide_result = tk.StringVar(value="—")
         self.divide_formula = tk.StringVar(value=f"B ÷ {DEFAULT_DIVISOR}")
+        self.multiply_value = tk.StringVar()
+        self.addend_value = tk.StringVar()
+        self.multiply_add_result = tk.StringVar(value="—")
+        self.multiply_add_formula = tk.StringVar(value="475 × — + — =")
         self.counter_value = tk.IntVar(value=0)
         (
             self.counter_hotkey,
@@ -412,10 +434,14 @@ class CalculatorApp(ctk.CTk):
         self.page_subtitle = tk.StringVar(value="双结果计算")
         self.shortcut_text = tk.StringVar(value=self._shortcut_summary())
         self._page_status: dict[str, tuple[str, str]] = {
-            "calculator": ("输入 A、B，可按需修改除数。", "neutral"),
+            "standard": ("输入 A、B，可按需修改除数。", "neutral"),
+            "multiply_add": (
+                "输入乘数和加数，固定按 475 × 乘数 + 加数计算。",
+                "neutral",
+            ),
             "counter": ("按 +1 或已绑定快捷键开始计数。", "neutral"),
         }
-        self.status_text = tk.StringVar(value=self._page_status["calculator"][0])
+        self.status_text = tk.StringVar(value=self._page_status["standard"][0])
         self._invalid_entries: set[ctk.CTkEntry] = set()
         self._focused_entry: ctk.CTkEntry | None = None
         self._capturing_hotkey = False
@@ -519,9 +545,35 @@ class CalculatorApp(ctk.CTk):
         self.calculator_page = ctk.CTkFrame(page_host, fg_color="transparent")
         self.calculator_page.grid(row=0, column=0, sticky="nsew")
         self.calculator_page.grid_columnconfigure(0, weight=1)
-        self._build_input_card(self.calculator_page)
-        self._build_actions(self.calculator_page)
-        self._build_results(self.calculator_page)
+        self.calculator_page.grid_rowconfigure(1, weight=1)
+        self._build_calculation_mode_switch(self.calculator_page)
+
+        calculation_host = ctk.CTkFrame(
+            self.calculator_page,
+            fg_color="transparent",
+        )
+        calculation_host.grid(row=1, column=0, sticky="nsew")
+        calculation_host.grid_columnconfigure(0, weight=1)
+        calculation_host.grid_rowconfigure(0, weight=1)
+
+        self.standard_calculator_panel = ctk.CTkFrame(
+            calculation_host,
+            fg_color="transparent",
+        )
+        self.standard_calculator_panel.grid(row=0, column=0, sticky="nsew")
+        self.standard_calculator_panel.grid_columnconfigure(0, weight=1)
+        self._build_input_card(self.standard_calculator_panel)
+        self._build_actions(self.standard_calculator_panel)
+        self._build_results(self.standard_calculator_panel)
+
+        self.multiply_add_panel = ctk.CTkFrame(
+            calculation_host,
+            fg_color="transparent",
+        )
+        self.multiply_add_panel.grid(row=0, column=0, sticky="nsew")
+        self.multiply_add_panel.grid_columnconfigure(0, weight=1)
+        self._build_multiply_add_panel(self.multiply_add_panel)
+        self.standard_calculator_panel.tkraise()
 
         self.counter_page = ctk.CTkFrame(page_host, fg_color="transparent")
         self.counter_page.grid(row=0, column=0, sticky="nsew")
@@ -589,6 +641,63 @@ class CalculatorApp(ctk.CTk):
             rowspan=2,
             sticky="e",
             padx=(10, 0),
+        )
+
+    def _build_calculation_mode_switch(self, parent: ctk.CTkFrame) -> None:
+        mode_row = ctk.CTkFrame(parent, fg_color="transparent")
+        mode_row.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        mode_row.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            mode_row,
+            text="计算模式",
+            font=self.label_font,
+            text_color=TEXT,
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w")
+
+        selector = ctk.CTkFrame(
+            mode_row,
+            corner_radius=10,
+            fg_color=SURFACE_ALT,
+            border_width=1,
+            border_color=BORDER,
+        )
+        selector.grid(row=0, column=1, sticky="e")
+
+        self.standard_mode_button = ctk.CTkButton(
+            selector,
+            text="双结果",
+            width=88,
+            height=32,
+            corner_radius=8,
+            border_width=1,
+            border_color=ACCENT_BORDER,
+            fg_color=ACCENT_SOFT,
+            hover_color=ACCENT_BORDER,
+            text_color=ACCENT,
+            font=self.caption_font,
+            command=self.show_standard_mode,
+        )
+        self.standard_mode_button.grid(row=0, column=0, padx=3, pady=3)
+
+        self.multiply_add_mode_button = ctk.CTkButton(
+            selector,
+            text="475 乘加",
+            width=96,
+            height=32,
+            corner_radius=8,
+            border_width=0,
+            fg_color="transparent",
+            hover_color=BORDER,
+            text_color=MUTED,
+            font=self.caption_font,
+            command=self.show_multiply_add_mode,
+        )
+        self.multiply_add_mode_button.grid(
+            row=0,
+            column=1,
+            padx=(0, 3),
+            pady=3,
         )
 
     def _build_input_card(self, parent: ctk.CTkFrame) -> None:
@@ -747,6 +856,146 @@ class CalculatorApp(ctk.CTk):
             command=self.calculate,
         )
         self.calculate_button.grid(row=0, column=1, sticky="ew", padx=(5, 0))
+
+    def _build_multiply_add_panel(self, parent: ctk.CTkFrame) -> None:
+        card = ctk.CTkFrame(
+            parent,
+            corner_radius=16,
+            fg_color=SURFACE,
+            border_width=1,
+            border_color=BORDER,
+        )
+        card.grid(row=0, column=0, sticky="ew")
+        card.grid_columnconfigure(0, weight=1)
+
+        card_header = ctk.CTkFrame(card, fg_color="transparent")
+        card_header.grid(row=0, column=0, sticky="ew", padx=18, pady=(14, 8))
+        card_header.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            card_header,
+            text="固定乘加公式",
+            font=self.section_font,
+            text_color=TEXT,
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(
+            card_header,
+            text="固定系数 475",
+            height=26,
+            corner_radius=7,
+            fg_color=ACCENT_SOFT,
+            text_color=ACCENT,
+            font=self.caption_font,
+        ).grid(row=0, column=1, sticky="e")
+
+        formula_strip = ctk.CTkFrame(
+            card,
+            height=38,
+            corner_radius=9,
+            fg_color=SURFACE_ALT,
+        )
+        formula_strip.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 10))
+        formula_strip.grid_propagate(False)
+        ctk.CTkLabel(
+            formula_strip,
+            text="475 × 乘数 + 加数 = 结果",
+            font=self.body_font,
+            text_color=MUTED,
+        ).place(relx=0.5, rely=0.5, anchor="center")
+
+        fields = ctk.CTkFrame(card, fg_color="transparent")
+        fields.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 16))
+        fields.grid_columnconfigure(0, weight=1)
+        fields.grid_columnconfigure(1, weight=1)
+        self.multiply_entry = self._add_input_field(
+            fields,
+            column=0,
+            label="乘数",
+            variable=self.multiply_value,
+            placeholder="例如 2",
+            hint="475 要乘的数",
+            padx=(0, 6),
+        )
+        self.addend_entry = self._add_input_field(
+            fields,
+            column=1,
+            label="加数",
+            variable=self.addend_value,
+            placeholder="例如 25",
+            hint="最后加上的数",
+            padx=(6, 0),
+        )
+
+        actions = ctk.CTkFrame(parent, fg_color="transparent")
+        actions.grid(row=1, column=0, sticky="ew", pady=(14, 17))
+        actions.grid_columnconfigure(0, weight=1)
+        actions.grid_columnconfigure(1, weight=2)
+        self.multiply_add_clear_button = ctk.CTkButton(
+            actions,
+            text="清空",
+            height=43,
+            corner_radius=10,
+            border_width=1,
+            border_color=BORDER,
+            fg_color=SURFACE,
+            hover_color=SURFACE_ALT,
+            text_color=TEXT,
+            font=self.body_font,
+            command=self.clear_multiply_add,
+        )
+        self.multiply_add_clear_button.grid(
+            row=0,
+            column=0,
+            sticky="ew",
+            padx=(0, 5),
+        )
+        self.multiply_add_calculate_button = ctk.CTkButton(
+            actions,
+            text="计算等于",
+            height=43,
+            corner_radius=10,
+            fg_color=ACCENT,
+            hover_color=ACCENT_HOVER,
+            text_color=ACCENT_TEXT,
+            font=self.button_font,
+            command=self.calculate_multiply_add,
+        )
+        self.multiply_add_calculate_button.grid(
+            row=0,
+            column=1,
+            sticky="ew",
+            padx=(5, 0),
+        )
+
+        result_header = ctk.CTkFrame(parent, fg_color="transparent")
+        result_header.grid(row=2, column=0, sticky="ew", pady=(0, 7))
+        result_header.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            result_header,
+            text="计算结果",
+            font=self.section_font,
+            text_color=TEXT,
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(
+            result_header,
+            text="自动四舍五入至 2 位",
+            font=self.caption_font,
+            text_color=FAINT,
+            anchor="e",
+        ).grid(row=0, column=1, sticky="e")
+
+        (
+            self.multiply_add_result_card,
+            self.multiply_add_result_label,
+        ) = self._add_result_card(
+            parent,
+            row=3,
+            title="等于",
+            formula=self.multiply_add_formula,
+            variable=self.multiply_add_result,
+            featured=True,
+        )
 
     def _build_counter_page(self, parent: ctk.CTkFrame) -> None:
         intro = ctk.CTkFrame(parent, fg_color="transparent")
@@ -1066,18 +1315,60 @@ class CalculatorApp(ctk.CTk):
         self.a_value.trace_add("write", self._on_input_change)
         self.b_value.trace_add("write", self._on_input_change)
         self.divisor_value.trace_add("write", self._on_input_change)
+        self.multiply_value.trace_add("write", self._on_multiply_add_input_change)
+        self.addend_value.trace_add("write", self._on_multiply_add_input_change)
         self.bind("<KeyPress>", self._handle_keypress)
 
-        for entry in (self.a_entry, self.b_entry, self.divisor_entry):
+        for entry in (
+            self.a_entry,
+            self.b_entry,
+            self.divisor_entry,
+            self.multiply_entry,
+            self.addend_entry,
+        ):
             entry.bind("<FocusIn>", lambda _event, item=entry: self._focus_entry(item))
             entry.bind("<FocusOut>", lambda _event, item=entry: self._blur_entry(item))
 
         self.a_entry.bind("<Tab>", self._focus_b_from_keyboard)
-        self.a_entry.bind("<Shift-Tab>", self._focus_switch_from_keyboard)
+        self.a_entry.bind(
+            "<Shift-Tab>",
+            lambda _event: self._focus_widget(self.multiply_add_mode_button),
+        )
         self.b_entry.bind("<Tab>", self._focus_divisor_from_keyboard)
         self.b_entry.bind("<Shift-Tab>", self._focus_a_from_keyboard)
         self.divisor_entry.bind("<Tab>", self._focus_switch_from_keyboard)
         self.divisor_entry.bind("<Shift-Tab>", self._focus_b_from_keyboard)
+
+        self.multiply_entry.bind(
+            "<Tab>",
+            lambda _event: self._focus_widget(self.addend_entry),
+        )
+        self.multiply_entry.bind(
+            "<Shift-Tab>",
+            lambda _event: self._focus_widget(self.multiply_add_mode_button),
+        )
+        self.addend_entry.bind("<Tab>", self._focus_switch_from_keyboard)
+        self.addend_entry.bind(
+            "<Shift-Tab>",
+            lambda _event: self._focus_widget(self.multiply_entry),
+        )
+
+        self.standard_mode_button.bind(
+            "<Tab>",
+            lambda _event: self._focus_widget(self.multiply_add_mode_button),
+        )
+        self.standard_mode_button.bind(
+            "<Shift-Tab>",
+            self._focus_switch_from_keyboard,
+        )
+        self.multiply_add_mode_button.bind(
+            "<Tab>",
+            self._focus_active_calculation_start,
+        )
+        self.multiply_add_mode_button.bind(
+            "<Shift-Tab>",
+            lambda _event: self._focus_widget(self.standard_mode_button),
+        )
 
         self.page_switch_button.bind("<Tab>", self._focus_page_start_from_keyboard)
         self.page_switch_button.bind(
@@ -1114,16 +1405,64 @@ class CalculatorApp(ctk.CTk):
         else:
             self.show_calculator_page()
 
+    def show_standard_mode(self) -> None:
+        self._current_calculation_mode = "standard"
+        self.standard_calculator_panel.tkraise()
+        self._style_calculation_mode_buttons()
+        if self._current_page == "calculator":
+            self.page_subtitle.set("双结果计算")
+            self._restore_page_status()
+            self.a_entry.focus_set()
+
+    def show_multiply_add_mode(self) -> None:
+        self._current_calculation_mode = "multiply_add"
+        self.multiply_add_panel.tkraise()
+        self._style_calculation_mode_buttons()
+        if self._current_page == "calculator":
+            self.page_subtitle.set("475 固定乘加")
+            self._restore_page_status()
+            self.multiply_entry.focus_set()
+
+    def _style_calculation_mode_buttons(self) -> None:
+        active_options = {
+            "border_width": 1,
+            "border_color": ACCENT_BORDER,
+            "fg_color": ACCENT_SOFT,
+            "text_color": ACCENT,
+        }
+        inactive_options = {
+            "border_width": 0,
+            "fg_color": "transparent",
+            "text_color": MUTED,
+        }
+        standard_options = (
+            active_options
+            if self._current_calculation_mode == "standard"
+            else inactive_options
+        )
+        multiply_options = (
+            active_options
+            if self._current_calculation_mode == "multiply_add"
+            else inactive_options
+        )
+        self.standard_mode_button.configure(**standard_options)
+        self.multiply_add_mode_button.configure(**multiply_options)
+
     def show_calculator_page(self) -> None:
         if self._capturing_hotkey:
             self.cancel_hotkey_capture()
         self._current_page = "calculator"
         self.calculator_page.tkraise()
-        self.page_subtitle.set("双结果计算")
+        if self._current_calculation_mode == "multiply_add":
+            self.multiply_add_panel.tkraise()
+            self.page_subtitle.set("475 固定乘加")
+        else:
+            self.standard_calculator_panel.tkraise()
+            self.page_subtitle.set("双结果计算")
         self.page_switch_button.configure(text="快捷计数  →")
         self.shortcut_text.set(self._shortcut_summary())
         self._restore_page_status()
-        self.a_entry.focus_set()
+        self._focus_active_calculation_entry()
 
     def show_counter_page(self) -> None:
         self._current_page = "counter"
@@ -1160,6 +1499,10 @@ class CalculatorApp(ctk.CTk):
             if lowered in {"return", "kp_enter"}:
                 if self._focus_is_within(self.page_switch_button):
                     self.show_counter_page()
+                elif self._focus_is_within(self.standard_mode_button):
+                    self.show_standard_mode()
+                elif self._focus_is_within(self.multiply_add_mode_button):
+                    self.show_multiply_add_mode()
                 else:
                     self.calculate()
                 return "break"
@@ -1330,13 +1673,25 @@ class CalculatorApp(ctk.CTk):
 
     def _focus_page_start_from_keyboard(self, _event: tk.Event) -> str:
         if self._current_page == "calculator":
-            return self._focus_widget(self.a_entry)
+            return self._focus_widget(self.standard_mode_button)
         return self._focus_widget(self.counter_reset_button)
 
     def _focus_page_end_from_keyboard(self, _event: tk.Event) -> str:
         if self._current_page == "calculator":
+            if self._current_calculation_mode == "multiply_add":
+                return self._focus_widget(self.addend_entry)
             return self._focus_widget(self.divisor_entry)
         return self._focus_widget(self.hotkey_button)
+
+    def _focus_active_calculation_start(self, _event: tk.Event) -> str:
+        self._focus_active_calculation_entry()
+        return "break"
+
+    def _focus_active_calculation_entry(self) -> None:
+        if self._current_calculation_mode == "multiply_add":
+            self.multiply_entry.focus_set()
+        else:
+            self.a_entry.focus_set()
 
     @staticmethod
     def _focus_widget(widget: tk.Misc) -> str:
@@ -1356,7 +1711,13 @@ class CalculatorApp(ctk.CTk):
 
     def _reset_entries(self) -> None:
         self._invalid_entries.clear()
-        for entry in (self.a_entry, self.b_entry, self.divisor_entry):
+        for entry in (
+            self.a_entry,
+            self.b_entry,
+            self.divisor_entry,
+            self.multiply_entry,
+            self.addend_entry,
+        ):
             if entry is self._focused_entry:
                 entry.configure(border_color=ACCENT, border_width=2)
             else:
@@ -1369,17 +1730,50 @@ class CalculatorApp(ctk.CTk):
         self.total_result.set("—")
         self.divide_result.set("—")
         self._reset_result_labels()
-        self._set_status(
+        self._set_status_for(
+            "standard",
             "输入 A、B，可按需修改除数。",
             tone="neutral",
         )
 
+    def _on_multiply_add_input_change(self, *_args: object) -> None:
+        self._reset_entries()
+        multiplier = self._formula_preview_value(self.multiply_value.get())
+        addend = self._formula_preview_value(self.addend_value.get())
+        self.multiply_add_formula.set(f"475 × {multiplier} + {addend} =")
+        self.multiply_add_result.set("—")
+        self.multiply_add_result_label.configure(
+            text_color=FAINT,
+            font=self.result_font,
+        )
+        self._set_status_for(
+            "multiply_add",
+            "输入乘数和加数，固定按 475 × 乘数 + 加数计算。",
+            tone="neutral",
+        )
+
+    @staticmethod
+    def _formula_preview_value(value: str) -> str:
+        value = value.strip()
+        if not value:
+            return "—"
+        return value if len(value) <= 10 else f"{value[:9]}…"
+
     def _set_status(self, message: str, tone: str) -> None:
-        self._page_status[self._current_page] = (message, tone)
-        self._render_status(message, tone)
+        self._set_status_for(self._status_context(), message, tone)
+
+    def _set_status_for(self, context: str, message: str, tone: str) -> None:
+        self._page_status[context] = (message, tone)
+        if self._status_context() == context:
+            self._render_status(message, tone)
+
+    def _status_context(self) -> str:
+        if self._current_page == "counter":
+            return "counter"
+        return self._current_calculation_mode
 
     def _restore_page_status(self) -> None:
-        message, tone = self._page_status[self._current_page]
+        message, tone = self._page_status[self._status_context()]
         self._render_status(message, tone)
 
     def _render_status(self, message: str, tone: str) -> None:
@@ -1395,6 +1789,10 @@ class CalculatorApp(ctk.CTk):
         self.status_label.configure(text_color=foreground)
 
     def calculate(self) -> None:
+        if self._current_calculation_mode == "multiply_add":
+            self.calculate_multiply_add()
+            return
+
         try:
             total, divided = calculate_values(
                 self.a_value.get(),
@@ -1430,11 +1828,43 @@ class CalculatorApp(ctk.CTk):
             tone="success",
         )
 
+    def calculate_multiply_add(self) -> None:
+        try:
+            result = calculate_multiply_add_value(
+                self.multiply_value.get(),
+                self.addend_value.get(),
+            )
+        except InputValidationError as exc:
+            self.multiply_add_result.set("—")
+            self._reset_multiply_add_result_label()
+            invalid_entry = self._entry_for_field(exc.field)
+            self._invalid_entries.add(invalid_entry)
+            invalid_entry.configure(border_color=ERROR, border_width=2)
+            invalid_entry.focus_set()
+            self._set_status(str(exc), tone="error")
+            return
+        except CalculationRangeError as exc:
+            self.multiply_add_result.set("—")
+            self._reset_multiply_add_result_label()
+            self._reset_entries()
+            self._set_status(str(exc), tone="error")
+            return
+
+        self._reset_entries()
+        self.multiply_add_result.set(result)
+        self._style_result_label(self.multiply_add_result_label, result, ACCENT)
+        self._set_status(
+            "乘加计算完成：475 × 乘数 + 加数 = 结果。",
+            tone="success",
+        )
+
     def _entry_for_field(self, field: str) -> ctk.CTkEntry:
         return {
             "A": self.a_entry,
             "B": self.b_entry,
             "除数": self.divisor_entry,
+            "乘数": self.multiply_entry,
+            "加数": self.addend_entry,
         }[field]
 
     def _style_result_label(
@@ -1455,7 +1885,17 @@ class CalculatorApp(ctk.CTk):
         self.total_value_label.configure(text_color=FAINT, font=self.result_font)
         self.divide_value_label.configure(text_color=FAINT, font=self.result_font)
 
+    def _reset_multiply_add_result_label(self) -> None:
+        self.multiply_add_result_label.configure(
+            text_color=FAINT,
+            font=self.result_font,
+        )
+
     def clear(self) -> None:
+        if self._current_calculation_mode == "multiply_add":
+            self.clear_multiply_add()
+            return
+
         self.a_value.set("")
         self.b_value.set("")
         divisor_text = self.divisor_value.get().strip()
@@ -1471,6 +1911,18 @@ class CalculatorApp(ctk.CTk):
             tone="neutral",
         )
         self.a_entry.focus_set()
+
+    def clear_multiply_add(self) -> None:
+        self.multiply_value.set("")
+        self.addend_value.set("")
+        self._reset_entries()
+        self.multiply_add_result.set("—")
+        self._reset_multiply_add_result_label()
+        self._set_status(
+            "已清空乘数和加数；固定系数仍为 475。",
+            tone="neutral",
+        )
+        self.multiply_entry.focus_set()
 
     def _center_window(self) -> None:
         self.update_idletasks()

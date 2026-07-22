@@ -10,6 +10,7 @@ from calculator import (
     MAX_INPUT_LENGTH,
     CalculationRangeError,
     InputValidationError,
+    calculate_multiply_add_value,
     calculate_values,
     format_result,
     hotkey_display_name,
@@ -32,6 +33,17 @@ class CalculatorLogicTests(unittest.TestCase):
 
     def test_custom_decimal_divisor(self) -> None:
         self.assertEqual(calculate_values("1.25", "5", "2.5"), ("6.25", "2"))
+
+    def test_fixed_475_multiply_add_mode(self) -> None:
+        self.assertEqual(calculate_multiply_add_value("2", "25"), "975")
+        self.assertEqual(calculate_multiply_add_value("1.5", "0.25"), "712.75")
+        self.assertEqual(calculate_multiply_add_value("-2", "25"), "-925")
+
+    def test_fixed_multiply_add_mode_validates_both_inputs(self) -> None:
+        with self.assertRaisesRegex(InputValidationError, "请输入乘数"):
+            calculate_multiply_add_value("", "10")
+        with self.assertRaisesRegex(InputValidationError, "加数必须是数字"):
+            calculate_multiply_add_value("2", "bad")
 
     def test_negative_values(self) -> None:
         self.assertEqual(calculate_values("-10.5", "5", "-2"), ("-5.5", "-2.5"))
