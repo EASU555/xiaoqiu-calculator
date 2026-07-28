@@ -7,28 +7,46 @@ from tempfile import TemporaryDirectory
 from calculator import (
     DEFAULT_COUNTER_HOTKEY,
     DEFAULT_COUNTER_HOTKEY_CODE,
+    HISTORY_LIMIT,
     MAX_INPUT_LENGTH,
+    CalculationHistoryEntry,
     CalculationRangeError,
     InputValidationError,
+    append_calculation_history,
     calculate_fixed_value_operation,
     calculate_multiply_add_value,
     calculate_values,
+    clear_calculation_history,
+    counter_shortcut_matches,
+    empty_calculation_history,
     format_result,
     hotkey_display_name,
     hotkey_is_reserved,
     hotkey_matches_event,
     increment_counter_value,
+    load_calculation_history,
     load_counter_hotkey,
     load_counter_hotkey_binding,
     normalize_hotkey,
     normalize_keycode,
     parse_number,
+    save_calculation_history,
     save_counter_hotkey,
 )
 from decimal import Decimal
 
 
 class CalculatorLogicTests(unittest.TestCase):
+    @staticmethod
+    def history_entry(kind: str, index: int) -> CalculationHistoryEntry:
+        return CalculationHistoryEntry(
+            kind=kind,
+            expression=f"expression-{index}",
+            primary_result=f"result-{index}",
+            secondary_result=None,
+            created_at=f"2026-07-28T10:{index % 60:02d}:00+08:00",
+        )
+
     def test_default_divisor(self) -> None:
         self.assertEqual(calculate_values("592", "3325"), ("3917", "7"))
 
@@ -129,6 +147,11 @@ class CalculatorLogicTests(unittest.TestCase):
         self.assertFalse(hotkey_matches_event("a", 65, "a", 66))
         self.assertTrue(hotkey_matches_event("F8", None, "f8", None))
 
+    def test_space_remains_available_with_a_custom_counter_shortcut(self) -> None:
+        self.assertTrue(counter_shortcut_matches("F8", 119, "space", 32))
+        self.assertTrue(counter_shortcut_matches("F8", 119, "F8", 119))
+        self.assertFalse(counter_shortcut_matches("F8", 119, "a", 65))
+
     def test_hotkey_display_names_are_compact(self) -> None:
         self.assertEqual(hotkey_display_name("space"), "Space")
         self.assertEqual(hotkey_display_name("a"), "A")
@@ -161,6 +184,80 @@ class CalculatorLogicTests(unittest.TestCase):
             self.assertEqual(load_counter_hotkey(path), DEFAULT_COUNTER_HOTKEY)
             with self.assertRaises(ValueError):
                 save_counter_hotkey("Escape", path)
+
+    def test_history_limit_is_enforced_per_mode(self) -> None:
+        histories = empty_calculation_history()
+        for index in range(HISTORY_LIMIT + 5):
+            append_calculation_history(
+                histories,
+                self.history_entry("standard", index),
+            )
+        for index in range(HISTORY_LIMIT + 2):
+            append_calculation_history(
+                histories,
+                self.history_entry("multiply_add", index),
+            )
+
+        self.assertEqual(len(histories["standard"]), HISTORY_LIMIT)
+        self.assertEqual(len(histories["multiply_add"]), HISTORY_LIMIT)
+        self.assertEqual(histories["standard"][0].expression, "expression-54")
+        self.assertEqual(histories["standard"][-1].expression, "expression-5")
+        self.assertEqual(
+            histories["multiply_add"][0].expression,
+            "expression-51",
+        )
+        self.assertEqual(
+            histories["multiply_add"][-1].expression,
+            "expression-2",
+        )
+        self.assertEqual(histories["basic"], [])
+
+    def test_history_persists_across_reload(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "history.json"
+            histories = empty_calculation_history()
+            standard = self.history_entry("standard", 1)
+            multiply_add = self.history_entry("multiply_add", 2)
+            append_calculation_history(histories, standard)
+            append_calculation_history(histories, multiply_add)
+
+            save_calculation_history(histories, path)
+            restored = load_calculation_history(path)
+
+            self.assertEqual(restored["standard"], [standard])
+            self.assertEqual(restored["multiply_add"], [multiply_add])
+            self.assertEqual(restored["basic"], [])
+
+    def test_clearing_history_preserves_other_modes_and_persists(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "history.json"
+            histories = empty_calculation_history()
+            append_calculation_history(
+                histories,
+                self.history_entry("standard", 1),
+            )
+            multiply_add = self.history_entry("multiply_add", 2)
+            basic = self.history_entry("basic", 3)
+            append_calculation_history(histories, multiply_add)
+            append_calculation_history(histories, basic)
+
+            clear_calculation_history(histories, "standard")
+            save_calculation_history(histories, path)
+            restored = load_calculation_history(path)
+
+            self.assertEqual(restored["standard"], [])
+            self.assertEqual(restored["multiply_add"], [multiply_add])
+            self.assertEqual(restored["basic"], [basic])
+
+    def test_malformed_history_falls_back_to_isolated_empty_buckets(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "history.json"
+            path.write_text("{not-json", encoding="utf-8")
+
+            self.assertEqual(
+                load_calculation_history(path),
+                empty_calculation_history(),
+            )
 
 
 if __name__ == "__main__":
