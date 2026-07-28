@@ -5,7 +5,7 @@ struct XiaoqiuCalculatorApp: App {
     var body: some Scene {
         WindowGroup {
             CalculatorView()
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(.light)
         }
     }
 }

@@ -4,32 +4,47 @@ struct CalculatorView: View {
     @StateObject private var model = CalculatorViewModel()
     @FocusState private var focusedField: CalculatorField?
 
-    private let pageMaxWidth: CGFloat = 980
+    private let pageMaxWidth: CGFloat = 1_180
 
     var body: some View {
         GeometryReader { geometry in
+            let useWideLayout = geometry.size.width >= 760
+            let horizontalPadding: CGFloat = useWideLayout ? 32 : 18
+            let verticalPadding: CGFloat = useWideLayout ? 28 : 18
+            let pageMinHeight: CGFloat = useWideLayout
+                ? max(410, geometry.size.height - 310)
+                : 0
+
             ZStack {
                 Color.appBackground.ignoresSafeArea()
 
                 ScrollView {
-                    VStack(spacing: 18) {
+                    VStack(spacing: useWideLayout ? 20 : 16) {
                         header
                         pagePicker
-                        pageContent(useWideLayout: geometry.size.width >= 760)
+                        pageContent(
+                            useWideLayout: useWideLayout,
+                            minHeight: pageMinHeight
+                        )
                         statusBar
                         keyboardHint
                     }
                     .frame(maxWidth: pageMaxWidth)
-                    .padding(
-                        .horizontal,
-                        geometry.size.width >= 760 ? 32 : 20
+                    .frame(
+                        minHeight: max(
+                            0,
+                            geometry.size.height - verticalPadding * 2
+                        ),
+                        alignment: .top
                     )
-                    .padding(.vertical, geometry.size.width >= 760 ? 30 : 20)
+                    .padding(.horizontal, horizontalPadding)
+                    .padding(.vertical, verticalPadding)
                     .frame(maxWidth: .infinity)
                 }
                 .scrollDismissesKeyboard(.interactively)
             }
         }
+        .tint(Color.appAccent)
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Button(model.page == .counter ? "清零" : "清空") {
@@ -63,17 +78,19 @@ struct CalculatorView: View {
     private var header: some View {
         HStack(spacing: 13) {
             ZStack {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.accentSoft)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(Color.accentBorder, lineWidth: 1)
-                    }
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .fill(Color.surface)
+                    .shadow(
+                        color: Color.shadowTint,
+                        radius: 10,
+                        x: 0,
+                        y: 4
+                    )
                 Text(headerSymbol)
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .font(.system(size: 21, weight: .bold, design: .rounded))
                     .foregroundStyle(Color.appAccent)
             }
-            .frame(width: 48, height: 48)
+            .frame(width: 50, height: 50)
             .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -83,8 +100,29 @@ struct CalculatorView: View {
                 Text(model.subtitle)
                     .font(.subheadline)
                     .foregroundStyle(Color.mutedText)
+                    .lineLimit(1)
             }
+
             Spacer()
+
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(Color.appAccent)
+                    .frame(width: 7, height: 7)
+                Text("计算 / 工具")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.mutedText)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(Color.surface)
+            .clipShape(Capsule())
+            .shadow(
+                color: Color.shadowTint,
+                radius: 8,
+                x: 0,
+                y: 3
+            )
         }
     }
 
@@ -100,68 +138,183 @@ struct CalculatorView: View {
     }
 
     private var pagePicker: some View {
-        Picker("功能页面", selection: $model.page) {
+        HStack(spacing: 4) {
             ForEach(AppPage.allCases) { page in
-                Text(page.rawValue).tag(page)
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        model.page = page
+                    }
+                } label: {
+                    Text(page.rawValue)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(
+                            model.page == page
+                                ? Color.primaryText
+                                : Color.mutedText
+                        )
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 11)
+                        .background {
+                            if model.page == page {
+                                RoundedRectangle(
+                                    cornerRadius: 13,
+                                    style: .continuous
+                                )
+                                .fill(Color.surface)
+                                .shadow(
+                                    color: Color.shadowTint,
+                                    radius: 7,
+                                    x: 0,
+                                    y: 3
+                                )
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(page.rawValue)
+                .accessibilityHint("切换到\(page.rawValue)")
             }
         }
-        .pickerStyle(.segmented)
-        .accessibilityHint("切换计算器、基础运算和快捷计数")
+        .padding(4)
+        .background(Color.controlBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
+        .accessibilityElement(children: .contain)
     }
 
     @ViewBuilder
-    private func pageContent(useWideLayout: Bool) -> some View {
+    private func pageContent(
+        useWideLayout: Bool,
+        minHeight: CGFloat
+    ) -> some View {
         switch model.page {
         case .calculator:
-            calculatorPage(useWideLayout: useWideLayout)
+            calculatorPage(
+                useWideLayout: useWideLayout,
+                minHeight: minHeight
+            )
         case .basic:
-            basicPage(useWideLayout: useWideLayout)
+            basicPage(
+                useWideLayout: useWideLayout,
+                minHeight: minHeight
+            )
         case .counter:
-            counterPage
+            counterPage(
+                useWideLayout: useWideLayout,
+                minHeight: minHeight
+            )
         }
     }
 
-    private func calculatorPage(useWideLayout: Bool) -> some View {
-        VStack(spacing: 16) {
-            Picker("计算模式", selection: $model.mode) {
-                ForEach(CalculatorMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 460)
+    private func calculatorPage(
+        useWideLayout: Bool,
+        minHeight: CGFloat
+    ) -> some View {
+        let workspaceHeight = useWideLayout
+            ? max(340, minHeight - 60)
+            : nil
+
+        return VStack(spacing: 16) {
+            modePicker
+                .frame(maxWidth: useWideLayout ? 520 : .infinity)
 
             if model.mode == .standard {
-                standardWorkspace(useWideLayout: useWideLayout)
+                standardWorkspace(
+                    useWideLayout: useWideLayout,
+                    expandedHeight: workspaceHeight
+                )
             } else {
-                multiplyAddWorkspace(useWideLayout: useWideLayout)
+                multiplyAddWorkspace(
+                    useWideLayout: useWideLayout,
+                    expandedHeight: workspaceHeight
+                )
             }
         }
+        .frame(
+            maxWidth: .infinity,
+            minHeight: useWideLayout ? minHeight : nil,
+            alignment: .top
+        )
+    }
+
+    private var modePicker: some View {
+        HStack(spacing: 4) {
+            ForEach(CalculatorMode.allCases) { mode in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        model.mode = mode
+                    }
+                } label: {
+                    Text(mode.rawValue)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(
+                            model.mode == mode
+                                ? Color.primaryText
+                                : Color.mutedText
+                        )
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background {
+                            if model.mode == mode {
+                                RoundedRectangle(
+                                    cornerRadius: 12,
+                                    style: .continuous
+                                )
+                                .fill(Color.surface)
+                                .shadow(
+                                    color: Color.shadowTint,
+                                    radius: 6,
+                                    x: 0,
+                                    y: 2
+                                )
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(4)
+        .background(Color.controlBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     @ViewBuilder
-    private func standardWorkspace(useWideLayout: Bool) -> some View {
-        if useWideLayout {
-            HStack(alignment: .top, spacing: 18) {
+    private func standardWorkspace(
+        useWideLayout: Bool,
+        expandedHeight: CGFloat?
+    ) -> some View {
+        if useWideLayout, let expandedHeight {
+            HStack(alignment: .top, spacing: 20) {
                 VStack(spacing: 16) {
-                    standardInputCard
+                    standardInputCard(
+                        expandedHeight: max(260, expandedHeight - 72)
+                    )
                     actionButtons(primaryTitle: "计算结果")
                 }
                 .frame(maxWidth: .infinity)
-                standardResults.frame(maxWidth: .infinity)
+
+                standardResults(expandedHeight: expandedHeight)
+                    .frame(maxWidth: .infinity)
             }
+            .frame(minHeight: expandedHeight, alignment: .top)
         } else {
             VStack(spacing: 16) {
-                standardInputCard
+                standardInputCard(expandedHeight: nil)
                 actionButtons(primaryTitle: "计算结果")
-                standardResults
+                standardResults(expandedHeight: nil)
             }
         }
     }
 
-    private var standardInputCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
+    private func standardInputCard(expandedHeight: CGFloat?) -> some View {
+        let shouldExpand = expandedHeight != nil
+
+        return VStack(alignment: .leading, spacing: 16) {
             sectionHeader(title: "双结果输入", detail: "实时计算")
+
+            if shouldExpand {
+                Spacer(minLength: 14)
+            }
+
             numericInput(
                 field: .divisor,
                 title: "可调除数",
@@ -169,21 +322,53 @@ struct CalculatorView: View {
             )
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: 12) {
-                    numericInput(field: .a, title: "A 数据", placeholder: "120.5")
-                    numericInput(field: .b, title: "B 数据", placeholder: "475")
+                    numericInput(
+                        field: .a,
+                        title: "A 数据",
+                        placeholder: "120.5"
+                    )
+                    numericInput(
+                        field: .b,
+                        title: "B 数据",
+                        placeholder: "475"
+                    )
                 }
                 VStack(spacing: 14) {
-                    numericInput(field: .a, title: "A 数据", placeholder: "120.5")
-                    numericInput(field: .b, title: "B 数据", placeholder: "475")
+                    numericInput(
+                        field: .a,
+                        title: "A 数据",
+                        placeholder: "120.5"
+                    )
+                    numericInput(
+                        field: .b,
+                        title: "B 数据",
+                        placeholder: "475"
+                    )
                 }
             }
+
+            if shouldExpand {
+                Spacer(minLength: 14)
+            }
         }
+        .frame(
+            maxWidth: .infinity,
+            minHeight: expandedHeight,
+            alignment: .topLeading
+        )
         .cardStyle()
     }
 
-    private var standardResults: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private func standardResults(expandedHeight: CGFloat?) -> some View {
+        let shouldExpand = expandedHeight != nil
+
+        return VStack(alignment: .leading, spacing: 12) {
             sectionHeader(title: "计算结果", detail: "最多保留 2 位小数")
+
+            if shouldExpand {
+                Spacer(minLength: 16)
+            }
+
             resultCard(
                 title: "总数",
                 formula: "A + B",
@@ -196,32 +381,57 @@ struct CalculatorView: View {
                 value: model.dividedResult,
                 featured: false
             )
+
+            if shouldExpand {
+                Spacer(minLength: 16)
+            }
         }
+        .frame(
+            maxWidth: .infinity,
+            minHeight: expandedHeight,
+            alignment: .topLeading
+        )
+        .cardStyle()
     }
 
     @ViewBuilder
-    private func multiplyAddWorkspace(useWideLayout: Bool) -> some View {
-        if useWideLayout {
-            HStack(alignment: .top, spacing: 18) {
+    private func multiplyAddWorkspace(
+        useWideLayout: Bool,
+        expandedHeight: CGFloat?
+    ) -> some View {
+        if useWideLayout, let expandedHeight {
+            HStack(alignment: .top, spacing: 20) {
                 VStack(spacing: 16) {
-                    multiplyAddInputCard
+                    multiplyAddInputCard(
+                        expandedHeight: max(260, expandedHeight - 72)
+                    )
                     actionButtons(primaryTitle: "计算结果")
                 }
                 .frame(maxWidth: .infinity)
-                multiplyAddResults.frame(maxWidth: .infinity)
+
+                multiplyAddResults(expandedHeight: expandedHeight)
+                    .frame(maxWidth: .infinity)
             }
+            .frame(minHeight: expandedHeight, alignment: .top)
         } else {
             VStack(spacing: 16) {
-                multiplyAddInputCard
+                multiplyAddInputCard(expandedHeight: nil)
                 actionButtons(primaryTitle: "计算结果")
-                multiplyAddResults
+                multiplyAddResults(expandedHeight: nil)
             }
         }
     }
 
-    private var multiplyAddInputCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
+    private func multiplyAddInputCard(expandedHeight: CGFloat?) -> some View {
+        let shouldExpand = expandedHeight != nil
+
+        return VStack(alignment: .leading, spacing: 16) {
             sectionHeader(title: "乘加输入", detail: "系数默认 475")
+
+            if shouldExpand {
+                Spacer(minLength: 14)
+            }
+
             numericInput(
                 field: .coefficient,
                 title: "系数",
@@ -253,116 +463,280 @@ struct CalculatorView: View {
                     )
                 }
             }
+
+            if shouldExpand {
+                Spacer(minLength: 14)
+            }
         }
+        .frame(
+            maxWidth: .infinity,
+            minHeight: expandedHeight,
+            alignment: .topLeading
+        )
         .cardStyle()
     }
 
-    private var multiplyAddResults: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private func multiplyAddResults(expandedHeight: CGFloat?) -> some View {
+        let shouldExpand = expandedHeight != nil
+
+        return VStack(alignment: .leading, spacing: 12) {
             sectionHeader(title: "乘加结果", detail: "实时更新")
+
+            if shouldExpand {
+                Spacer(minLength: 16)
+            }
+
             resultCard(
                 title: "计算结果",
                 formula: model.multiplyAddFormula,
                 value: model.multiplyAddResult,
                 featured: true
             )
+
+            if shouldExpand {
+                Spacer(minLength: 16)
+            }
         }
+        .frame(
+            maxWidth: .infinity,
+            minHeight: expandedHeight,
+            alignment: .topLeading
+        )
+        .cardStyle()
     }
 
     @ViewBuilder
-    private func basicPage(useWideLayout: Bool) -> some View {
+    private func basicPage(
+        useWideLayout: Bool,
+        minHeight: CGFloat
+    ) -> some View {
         if useWideLayout {
-            HStack(alignment: .top, spacing: 18) {
+            let workspaceHeight = max(350, minHeight)
+
+            HStack(alignment: .top, spacing: 20) {
                 VStack(spacing: 16) {
-                    basicInputCard
+                    basicInputCard(
+                        expandedHeight: max(270, workspaceHeight - 72)
+                    )
                     actionButtons(primaryTitle: "计算结果")
                 }
                 .frame(maxWidth: .infinity)
-                basicResults.frame(maxWidth: .infinity)
+
+                basicResults(expandedHeight: workspaceHeight)
+                    .frame(maxWidth: .infinity)
             }
+            .frame(minHeight: workspaceHeight, alignment: .top)
         } else {
             VStack(spacing: 16) {
-                basicInputCard
+                basicInputCard(expandedHeight: nil)
                 actionButtons(primaryTitle: "计算结果")
-                basicResults
+                basicResults(expandedHeight: nil)
             }
         }
     }
 
-    private var basicInputCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
+    private func basicInputCard(expandedHeight: CGFloat?) -> some View {
+        let shouldExpand = expandedHeight != nil
+
+        return VStack(alignment: .leading, spacing: 16) {
             sectionHeader(title: "基础运算", detail: "固定值默认 475")
+
+            if shouldExpand {
+                Spacer(minLength: 14)
+            }
+
             numericInput(
                 field: .fixedValue,
                 title: "固定值",
                 placeholder: CalculatorEngine.defaultFixedValue
             )
-            Picker("运算符", selection: $model.basicOperation) {
-                ForEach(BasicOperation.allCases) { operation in
-                    Text(operation.rawValue).tag(operation)
-                }
-            }
-            .pickerStyle(.segmented)
+            operationPicker
             numericInput(
                 field: .operationValue,
                 title: "运算值",
                 placeholder: "25"
             )
+
+            if shouldExpand {
+                Spacer(minLength: 14)
+            }
         }
+        .frame(
+            maxWidth: .infinity,
+            minHeight: expandedHeight,
+            alignment: .topLeading
+        )
         .cardStyle()
     }
 
-    private var basicResults: some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private var operationPicker: some View {
+        HStack(spacing: 4) {
+            ForEach(BasicOperation.allCases) { operation in
+                Button {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        model.basicOperation = operation
+                    }
+                } label: {
+                    Text(operation.rawValue)
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(
+                            model.basicOperation == operation
+                                ? Color.appAccent
+                                : Color.mutedText
+                        )
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 9)
+                        .background {
+                            if model.basicOperation == operation {
+                                RoundedRectangle(
+                                    cornerRadius: 12,
+                                    style: .continuous
+                                )
+                                .fill(Color.surface)
+                                .shadow(
+                                    color: Color.shadowTint,
+                                    radius: 5,
+                                    x: 0,
+                                    y: 2
+                                )
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("运算符\(operation.rawValue)")
+            }
+        }
+        .padding(4)
+        .background(Color.controlBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func basicResults(expandedHeight: CGFloat?) -> some View {
+        let shouldExpand = expandedHeight != nil
+
+        return VStack(alignment: .leading, spacing: 12) {
             sectionHeader(title: "运算结果", detail: "实时更新")
+
+            if shouldExpand {
+                Spacer(minLength: 16)
+            }
+
             resultCard(
                 title: "计算结果",
                 formula: model.basicFormula,
                 value: model.basicResult,
                 featured: true
             )
+
+            if shouldExpand {
+                Spacer(minLength: 16)
+            }
+        }
+        .frame(
+            maxWidth: .infinity,
+            minHeight: expandedHeight,
+            alignment: .topLeading
+        )
+        .cardStyle()
+    }
+
+    @ViewBuilder
+    private func counterPage(
+        useWideLayout: Bool,
+        minHeight: CGFloat
+    ) -> some View {
+        if useWideLayout {
+            let workspaceHeight = max(390, minHeight)
+
+            HStack(spacing: 20) {
+                counterDisplay(
+                    expandedHeight: max(300, workspaceHeight - 44)
+                )
+                .frame(maxWidth: .infinity)
+
+                VStack(spacing: 16) {
+                    Button {
+                        model.incrementCounter()
+                    } label: {
+                        VStack(spacing: 12) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 44, weight: .medium))
+                            Text("加 1")
+                                .font(.title.bold())
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    .buttonStyle(PrimaryActionButtonStyle(minHeight: 180))
+                    .keyboardShortcut(.space, modifiers: [])
+
+                    Button {
+                        model.resetCounter()
+                    } label: {
+                        Label("清零", systemImage: "arrow.counterclockwise")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(SecondaryActionButtonStyle(height: 58))
+
+                    Text("连接实体键盘后，可按空格快速加一")
+                        .font(.caption)
+                        .foregroundStyle(Color.faintText)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(
+                maxWidth: .infinity,
+                minHeight: workspaceHeight,
+                alignment: .top
+            )
+        } else {
+            VStack(spacing: 16) {
+                counterDisplay(expandedHeight: nil)
+
+                Button {
+                    model.incrementCounter()
+                } label: {
+                    Label("加 1", systemImage: "plus")
+                        .font(.title2.bold())
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(PrimaryActionButtonStyle(height: 64))
+                .keyboardShortcut(.space, modifiers: [])
+
+                Button {
+                    model.resetCounter()
+                } label: {
+                    Label("清零", systemImage: "arrow.counterclockwise")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(SecondaryActionButtonStyle())
+
+                Text("在 iPad 连接实体键盘时，可按空格快速加一")
+                    .font(.caption)
+                    .foregroundStyle(Color.faintText)
+            }
+            .frame(maxWidth: 620)
         }
     }
 
-    private var counterPage: some View {
-        VStack(spacing: 18) {
-            VStack(spacing: 8) {
-                Text("当前计数")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.mutedText)
-                Text("\(model.counter)")
-                    .font(.system(size: 68, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color.appAccent)
-                    .monospacedDigit()
-                    .minimumScaleFactor(0.45)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, minHeight: 116)
-            }
-            .cardStyle()
-
-            Button {
-                model.incrementCounter()
-            } label: {
-                Label("加 1", systemImage: "plus")
-                    .font(.title2.bold())
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(PrimaryActionButtonStyle(height: 64))
-            .keyboardShortcut(.space, modifiers: [])
-
-            Button {
-                model.resetCounter()
-            } label: {
-                Label("清零", systemImage: "arrow.counterclockwise")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(SecondaryActionButtonStyle())
-
-            Text("在 iPad 连接实体键盘时，可按空格快速加一")
-                .font(.caption)
-                .foregroundStyle(Color.faintText)
+    private func counterDisplay(expandedHeight: CGFloat?) -> some View {
+        VStack(spacing: 12) {
+            Text("当前计数")
+                .font(.headline)
+                .foregroundStyle(Color.mutedText)
+            Text("\(model.counter)")
+                .font(.system(size: 86, weight: .medium, design: .rounded))
+                .foregroundStyle(Color.appAccent)
+                .monospacedDigit()
+                .minimumScaleFactor(0.35)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: 620)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: expandedHeight ?? 190
+        )
+        .cardStyle()
     }
 
     private func numericInput(
@@ -370,7 +744,7 @@ struct CalculatorView: View {
         title: String,
         placeholder: String
     ) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Color.primaryText)
@@ -391,12 +765,12 @@ struct CalculatorView: View {
             .focused($focusedField, equals: field)
             .submitLabel(.done)
             .onSubmit { model.calculate() }
-            .padding(.horizontal, 14)
-            .frame(height: 48)
+            .padding(.horizontal, 15)
+            .frame(height: 54)
             .background(Color.surfaceAlt)
-            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(
                         fieldBorderColor(field),
                         lineWidth: fieldBorderWidth(field)
@@ -409,13 +783,14 @@ struct CalculatorView: View {
     }
 
     private func actionButtons(primaryTitle: String) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 12) {
             Button {
                 model.clear()
             } label: {
-                Text("清空").frame(maxWidth: .infinity)
+                Text("清空")
+                    .frame(maxWidth: .infinity)
             }
-            .buttonStyle(SecondaryActionButtonStyle())
+            .buttonStyle(SecondaryActionButtonStyle(height: 56))
 
             Button {
                 model.calculate()
@@ -423,7 +798,7 @@ struct CalculatorView: View {
                 Label(primaryTitle, systemImage: "equal")
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(PrimaryActionButtonStyle())
+            .buttonStyle(PrimaryActionButtonStyle(height: 56))
         }
     }
 
@@ -433,24 +808,25 @@ struct CalculatorView: View {
         value: String,
         featured: Bool
     ) -> some View {
-        HStack(spacing: 14) {
-            if featured {
-                Capsule()
-                    .fill(Color.appAccent)
-                    .frame(width: 4, height: 48)
-                    .accessibilityHidden(true)
-            }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                if featured {
+                    Circle()
+                        .fill(Color.appAccent)
+                        .frame(width: 8, height: 8)
+                        .accessibilityHidden(true)
+                }
 
-            VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.primaryText)
+                Spacer(minLength: 8)
                 Text(formula)
                     .font(.caption)
                     .foregroundStyle(Color.mutedText)
                     .lineLimit(1)
             }
-            Spacer(minLength: 12)
+
             Text(value)
                 .font(resultFont(for: value))
                 .foregroundStyle(
@@ -459,18 +835,19 @@ struct CalculatorView: View {
                         : (featured ? Color.appAccent : Color.primaryText)
                 )
                 .lineLimit(1)
-                .minimumScaleFactor(0.5)
+                .minimumScaleFactor(0.45)
                 .monospacedDigit()
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .padding(.horizontal, 16)
-        .frame(minHeight: 84)
-        .background(Color.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .padding(18)
+        .frame(maxWidth: .infinity, minHeight: 112)
+        .background(Color.surfaceAlt)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
                 .stroke(
                     featured ? Color.accentBorder : Color.border,
-                    lineWidth: 1
+                    lineWidth: featured ? 1.5 : 1
                 )
         }
         .accessibilityElement(children: .combine)
@@ -487,10 +864,10 @@ struct CalculatorView: View {
                 .foregroundStyle(statusForeground)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 11)
+        .padding(.horizontal, 15)
+        .padding(.vertical, 12)
         .background(statusBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
         .animation(.easeOut(duration: 0.18), value: model.status)
         .accessibilityLabel("状态：\(model.status)")
     }
@@ -531,12 +908,12 @@ struct CalculatorView: View {
 
     private func resultFont(for value: String) -> Font {
         if value.count <= 12 {
-            return .system(size: 27, weight: .bold, design: .rounded)
+            return .system(size: 40, weight: .medium, design: .rounded)
         }
         if value.count <= 18 {
-            return .system(size: 22, weight: .bold, design: .rounded)
+            return .system(size: 31, weight: .medium, design: .rounded)
         }
-        return .system(size: 17, weight: .bold, design: .rounded)
+        return .system(size: 23, weight: .medium, design: .rounded)
     }
 
     private var statusForeground: Color {
@@ -553,7 +930,7 @@ struct CalculatorView: View {
     private var statusBackground: Color {
         switch model.statusTone {
         case .neutral:
-            return .surfaceAlt
+            return .surface
         case .success:
             return .successSoft
         case .error:
@@ -563,40 +940,60 @@ struct CalculatorView: View {
 }
 
 private struct PrimaryActionButtonStyle: ButtonStyle {
-    var height: CGFloat = 50
+    var height: CGFloat? = 50
+    var minHeight: CGFloat? = nil
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.headline)
             .foregroundStyle(Color.accentButtonText)
             .padding(.horizontal, 16)
-            .frame(height: height)
+            .frame(
+                maxWidth: .infinity,
+                minHeight: minHeight,
+                idealHeight: height,
+                maxHeight: minHeight == nil ? height : .infinity
+            )
             .background(
                 configuration.isPressed
                     ? Color.accentHover
                     : Color.appAccent
             )
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .shadow(
+                color: Color.accentShadow,
+                radius: configuration.isPressed ? 4 : 10,
+                x: 0,
+                y: configuration.isPressed ? 2 : 6
+            )
             .scaleEffect(configuration.isPressed ? 0.985 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 
 private struct SecondaryActionButtonStyle: ButtonStyle {
+    var height: CGFloat = 50
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.headline)
             .foregroundStyle(Color.primaryText)
             .padding(.horizontal, 16)
-            .frame(height: 50)
+            .frame(height: height)
             .background(
                 configuration.isPressed ? Color.surfaceAlt : Color.surface
             )
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .stroke(Color.border, lineWidth: 1)
             }
+            .shadow(
+                color: Color.shadowTint,
+                radius: configuration.isPressed ? 3 : 8,
+                x: 0,
+                y: configuration.isPressed ? 1 : 4
+            )
             .scaleEffect(configuration.isPressed ? 0.985 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
@@ -604,33 +1001,37 @@ private struct SecondaryActionButtonStyle: ButtonStyle {
 
 private extension View {
     func cardStyle() -> some View {
-        padding(18)
+        padding(22)
             .background(Color.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 17, style: .continuous)
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
                     .stroke(Color.border, lineWidth: 1)
             }
+            .shadow(color: Color.shadowTint, radius: 12, x: 0, y: 5)
     }
 }
 
 private extension Color {
-    static let appBackground = Color(hex: 0x0D0F12)
-    static let surface = Color(hex: 0x171A1F)
-    static let surfaceAlt = Color(hex: 0x1E2228)
-    static let border = Color(hex: 0x303640)
-    static let primaryText = Color(hex: 0xF4F6F8)
-    static let mutedText = Color(hex: 0xA8B0BA)
-    static let faintText = Color(hex: 0x7D8792)
-    static let appAccent = Color(hex: 0xF28C28)
-    static let accentHover = Color(hex: 0xFFA44F)
-    static let accentButtonText = Color(hex: 0x19120C)
-    static let accentSoft = Color(hex: 0x211C17)
-    static let accentBorder = Color(hex: 0x704624)
-    static let successText = Color(hex: 0x74D18A)
-    static let successSoft = Color(hex: 0x112419)
-    static let errorText = Color(hex: 0xFF9191)
-    static let errorSoft = Color(hex: 0x351619)
+    static let appBackground = Color(hex: 0xF5F5F3)
+    static let surface = Color(hex: 0xFFFFFF)
+    static let surfaceAlt = Color(hex: 0xF6F6F4)
+    static let controlBackground = Color(hex: 0xEAEAE7)
+    static let border = Color(hex: 0xE1E1DE)
+    static let primaryText = Color(hex: 0x171717)
+    static let mutedText = Color(hex: 0x6F7074)
+    static let faintText = Color(hex: 0x96979B)
+    static let appAccent = Color(hex: 0xFF7500)
+    static let accentHover = Color(hex: 0xE96900)
+    static let accentButtonText = Color.white
+    static let accentSoft = Color(hex: 0xFFF0E3)
+    static let accentBorder = Color(hex: 0xFFC68F)
+    static let successText = Color(hex: 0x31825B)
+    static let successSoft = Color(hex: 0xEAF7EF)
+    static let errorText = Color(hex: 0xC74B4B)
+    static let errorSoft = Color(hex: 0xFCEEEE)
+    static let shadowTint = Color.black.opacity(0.07)
+    static let accentShadow = Color(hex: 0xFF7500).opacity(0.22)
 
     init(hex: UInt32) {
         self.init(
@@ -646,7 +1047,12 @@ private extension Color {
         .frame(width: 393, height: 852)
 }
 
-#Preview("iPad") {
+#Preview("iPad Portrait") {
     CalculatorView()
-        .frame(width: 1024, height: 768)
+        .frame(width: 1_024, height: 1_366)
+}
+
+#Preview("iPad Landscape") {
+    CalculatorView()
+        .frame(width: 1_366, height: 1_024)
 }
