@@ -10,15 +10,16 @@ struct CalculatorView: View {
     @Environment(\.accessibilityReduceTransparency)
     private var reduceTransparency
 
-    private let pageMaxWidth: CGFloat = 1_100
+    private let pageMaxWidth: CGFloat = 1_400
 
     var body: some View {
         TabView(selection: $model.page) {
             NavigationStack {
-                pageCanvas { useWideLayout, minHeight in
+                pageCanvas { useWideLayout, minHeight, contentWidth in
                     calculatorPage(
                         useWideLayout: useWideLayout,
-                        minHeight: minHeight
+                        minHeight: minHeight,
+                        contentWidth: contentWidth
                     )
                 }
                 .navigationTitle("计算器")
@@ -33,10 +34,11 @@ struct CalculatorView: View {
             .tag(AppPage.calculator)
 
             NavigationStack {
-                pageCanvas { useWideLayout, minHeight in
+                pageCanvas { useWideLayout, minHeight, contentWidth in
                     basicPage(
                         useWideLayout: useWideLayout,
-                        minHeight: minHeight
+                        minHeight: minHeight,
+                        contentWidth: contentWidth
                     )
                 }
                 .navigationTitle("基础运算")
@@ -51,7 +53,7 @@ struct CalculatorView: View {
             .tag(AppPage.basic)
 
             NavigationStack {
-                pageCanvas { useWideLayout, minHeight in
+                pageCanvas { useWideLayout, minHeight, _ in
                     counterPage(
                         useWideLayout: useWideLayout,
                         minHeight: minHeight
@@ -108,12 +110,16 @@ struct CalculatorView: View {
 
     @ViewBuilder
     private func pageCanvas<Content: View>(
-        @ViewBuilder content: @escaping (Bool, CGFloat) -> Content
+        @ViewBuilder content: @escaping (Bool, CGFloat, CGFloat) -> Content
     ) -> some View {
         GeometryReader { geometry in
             let useWideLayout = geometry.size.width >= 760
             let horizontalPadding: CGFloat = useWideLayout ? 32 : 18
             let verticalPadding: CGFloat = useWideLayout ? 24 : 16
+            let contentWidth = min(
+                pageMaxWidth,
+                max(0, geometry.size.width - horizontalPadding * 2)
+            )
             let minHeight = max(
                 0,
                 geometry.size.height - verticalPadding * 2
@@ -125,7 +131,7 @@ struct CalculatorView: View {
                 )
 
                 ScrollView {
-                    content(useWideLayout, minHeight)
+                    content(useWideLayout, minHeight, contentWidth)
                         .frame(maxWidth: pageMaxWidth)
                         .frame(
                             minHeight: minHeight,
@@ -164,7 +170,8 @@ struct CalculatorView: View {
 
     private func calculatorPage(
         useWideLayout: Bool,
-        minHeight: CGFloat
+        minHeight: CGFloat,
+        contentWidth: CGFloat
     ) -> some View {
         VStack(spacing: useWideLayout ? 20 : 16) {
             modePicker
@@ -181,7 +188,8 @@ struct CalculatorView: View {
             inlineStatus
             numericKeypad(
                 useWideLayout: useWideLayout,
-                availableHeight: minHeight
+                availableHeight: minHeight,
+                availableWidth: contentWidth
             )
         }
         .frame(
@@ -336,7 +344,8 @@ struct CalculatorView: View {
 
     private func basicPage(
         useWideLayout: Bool,
-        minHeight: CGFloat
+        minHeight: CGFloat,
+        contentWidth: CGFloat
     ) -> some View {
         VStack(spacing: useWideLayout ? 20 : 16) {
             historyPanel(useWideLayout: useWideLayout)
@@ -344,7 +353,8 @@ struct CalculatorView: View {
             inlineStatus
             numericKeypad(
                 useWideLayout: useWideLayout,
-                availableHeight: minHeight
+                availableHeight: minHeight,
+                availableWidth: contentWidth
             )
         }
         .frame(
@@ -753,10 +763,12 @@ struct CalculatorView: View {
 
     private func numericKeypad(
         useWideLayout: Bool,
-        availableHeight: CGFloat
+        availableHeight: CGFloat,
+        availableWidth: CGFloat
     ) -> some View {
         let keyHeight = CalculatorLayoutMetrics.keypadKeyHeight(
             availableHeight: availableHeight,
+            availableWidth: availableWidth,
             useWideLayout: useWideLayout
         )
 
@@ -1041,12 +1053,17 @@ struct CalculatorView: View {
 enum CalculatorLayoutMetrics {
     static func keypadKeyHeight(
         availableHeight: CGFloat,
+        availableWidth: CGFloat,
         useWideLayout: Bool
     ) -> CGFloat {
         let minimum: CGFloat = useWideLayout ? 64 : 48
         let maximum: CGFloat = useWideLayout ? 112 : 56
         let heightRatio: CGFloat = useWideLayout ? 0.10 : 0.065
-        let proposedHeight = availableHeight * heightRatio
+        let widthRatio: CGFloat = useWideLayout ? 0.085 : 0.14
+        let proposedHeight = max(
+            availableHeight * heightRatio,
+            availableWidth * widthRatio
+        )
 
         return min(maximum, max(minimum, proposedHeight))
     }

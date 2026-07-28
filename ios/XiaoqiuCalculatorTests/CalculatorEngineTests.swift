@@ -7,6 +7,7 @@ final class CalculatorEngineTests: XCTestCase {
         XCTAssertEqual(
             CalculatorLayoutMetrics.keypadKeyHeight(
                 availableHeight: 650,
+                availableWidth: 357,
                 useWideLayout: false
             ),
             48,
@@ -15,6 +16,7 @@ final class CalculatorEngineTests: XCTestCase {
         XCTAssertEqual(
             CalculatorLayoutMetrics.keypadKeyHeight(
                 availableHeight: 800,
+                availableWidth: 357,
                 useWideLayout: false
             ),
             52,
@@ -23,17 +25,28 @@ final class CalculatorEngineTests: XCTestCase {
         XCTAssertEqual(
             CalculatorLayoutMetrics.keypadKeyHeight(
                 availableHeight: 800,
+                availableWidth: 960,
                 useWideLayout: true
             ),
-            80,
+            81.6,
             accuracy: 0.001
         )
         XCTAssertEqual(
             CalculatorLayoutMetrics.keypadKeyHeight(
                 availableHeight: 1_200,
+                availableWidth: 960,
                 useWideLayout: true
             ),
             112,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            CalculatorLayoutMetrics.keypadKeyHeight(
+                availableHeight: 720,
+                availableWidth: 1_300,
+                useWideLayout: true
+            ),
+            110.5,
             accuracy: 0.001
         )
     }
