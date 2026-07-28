@@ -10,6 +10,7 @@ from calculator import (
     MAX_INPUT_LENGTH,
     CalculationRangeError,
     InputValidationError,
+    calculate_fixed_value_operation,
     calculate_multiply_add_value,
     calculate_values,
     format_result,
@@ -34,16 +35,46 @@ class CalculatorLogicTests(unittest.TestCase):
     def test_custom_decimal_divisor(self) -> None:
         self.assertEqual(calculate_values("1.25", "5", "2.5"), ("6.25", "2"))
 
-    def test_fixed_475_multiply_add_mode(self) -> None:
-        self.assertEqual(calculate_multiply_add_value("2", "25"), "975")
-        self.assertEqual(calculate_multiply_add_value("1.5", "0.25"), "712.75")
-        self.assertEqual(calculate_multiply_add_value("-2", "25"), "-925")
+    def test_default_475_multiply_add_mode(self) -> None:
+        self.assertEqual(calculate_multiply_add_value("475", "2", "25"), "975")
+        self.assertEqual(
+            calculate_multiply_add_value("475", "1.5", "0.25"),
+            "712.75",
+        )
+        self.assertEqual(calculate_multiply_add_value("475", "-2", "25"), "-925")
 
-    def test_fixed_multiply_add_mode_validates_both_inputs(self) -> None:
+    def test_custom_coefficient_multiply_add_mode(self) -> None:
+        self.assertEqual(calculate_multiply_add_value("500", "2", "25"), "1025")
+        self.assertEqual(calculate_multiply_add_value("1.5", "4", "2"), "8")
+        self.assertEqual(calculate_multiply_add_value("-3", "2", "1"), "-5")
+
+    def test_multiply_add_mode_validates_all_inputs(self) -> None:
+        with self.assertRaisesRegex(InputValidationError, "请输入系数"):
+            calculate_multiply_add_value("", "2", "10")
         with self.assertRaisesRegex(InputValidationError, "请输入乘数"):
-            calculate_multiply_add_value("", "10")
+            calculate_multiply_add_value("475", "", "10")
         with self.assertRaisesRegex(InputValidationError, "加数必须是数字"):
-            calculate_multiply_add_value("2", "bad")
+            calculate_multiply_add_value("475", "2", "bad")
+
+    def test_fixed_value_basic_operations(self) -> None:
+        self.assertEqual(calculate_fixed_value_operation("475", "25", "+"), "500")
+        self.assertEqual(calculate_fixed_value_operation("475", "25", "-"), "450")
+        self.assertEqual(calculate_fixed_value_operation("12", "2.5", "×"), "30")
+        self.assertEqual(calculate_fixed_value_operation("10", "4", "÷"), "2.5")
+
+    def test_fixed_value_operations_support_negative_values(self) -> None:
+        self.assertEqual(calculate_fixed_value_operation("-10", "2.5", "+"), "-7.5")
+        self.assertEqual(calculate_fixed_value_operation("-10", "-2", "×"), "20")
+
+    def test_fixed_value_operation_validates_inputs_and_zero_division(self) -> None:
+        with self.assertRaisesRegex(InputValidationError, "请输入固定值"):
+            calculate_fixed_value_operation("", "2", "+")
+        with self.assertRaisesRegex(InputValidationError, "运算值必须是数字"):
+            calculate_fixed_value_operation("475", "bad", "-")
+        with self.assertRaisesRegex(InputValidationError, "运算值不能为 0"):
+            calculate_fixed_value_operation("475", "0", "÷")
+        with self.assertRaisesRegex(ValueError, "不支持的运算符"):
+            calculate_fixed_value_operation("475", "2", "%")
 
     def test_negative_values(self) -> None:
         self.assertEqual(calculate_values("-10.5", "5", "-2"), ("-5.5", "-2.5"))
