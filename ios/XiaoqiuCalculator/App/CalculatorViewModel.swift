@@ -31,6 +31,14 @@ struct CalculationHistoryEntry: Identifiable, Codable, Equatable {
     let createdAt: Date
 }
 
+enum CalculatorKeypadInput: Equatable {
+    case digit(String)
+    case decimal
+    case delete
+    case clear
+    case toggleSign
+}
+
 @MainActor
 final class CalculatorViewModel: ObservableObject {
     enum StatusTone {
@@ -196,6 +204,76 @@ final class CalculatorViewModel: ObservableObject {
             operationValueText = value
             refreshBasicLive()
         }
+    }
+
+    @discardableResult
+    func applyKeypadInput(
+        _ input: CalculatorKeypadInput,
+        to field: CalculatorField,
+        replacingExisting: Bool = false
+    ) -> Bool {
+        let current = text(for: field)
+        let candidate: String
+
+        switch input {
+        case let .digit(digit):
+            guard
+                digit.count == 1,
+                digit.allSatisfy({ $0.isNumber })
+            else {
+                return false
+            }
+
+            if replacingExisting {
+                candidate = digit
+            } else if current == "0" {
+                candidate = digit
+            } else if current == "-0" {
+                candidate = "-\(digit)"
+            } else {
+                candidate = current + digit
+            }
+
+        case .decimal:
+            guard !current.contains(".") || replacingExisting else {
+                return false
+            }
+
+            if replacingExisting || current.isEmpty {
+                candidate = "0."
+            } else if current == "-" {
+                candidate = "-0."
+            } else {
+                candidate = current + "."
+            }
+
+        case .delete:
+            guard !current.isEmpty else { return false }
+            candidate = String(current.dropLast())
+
+        case .clear:
+            guard !current.isEmpty else { return false }
+            candidate = ""
+
+        case .toggleSign:
+            if current.hasPrefix("-") {
+                candidate = String(current.dropFirst())
+            } else if current.isEmpty {
+                candidate = "-"
+            } else {
+                candidate = "-\(current)"
+            }
+        }
+
+        guard
+            candidate != current,
+            CalculatorEngine.isEditingTextValid(candidate)
+        else {
+            return false
+        }
+
+        update(candidate, for: field)
+        return true
     }
 
     func calculate() {

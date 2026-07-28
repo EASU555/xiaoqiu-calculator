@@ -192,6 +192,56 @@ final class CalculatorEngineTests: XCTestCase {
     }
 
     @MainActor
+    func testKeypadEditsSelectedFieldWithoutSystemKeyboard() throws {
+        let suiteName = "CalculatorKeypadTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = CalculatorViewModel(userDefaults: defaults)
+
+        XCTAssertTrue(model.applyKeypadInput(.digit("1"), to: .a))
+        XCTAssertTrue(model.applyKeypadInput(.digit("2"), to: .a))
+        XCTAssertTrue(model.applyKeypadInput(.decimal, to: .a))
+        XCTAssertTrue(model.applyKeypadInput(.digit("5"), to: .a))
+        XCTAssertEqual(model.text(for: .a), "12.5")
+
+        XCTAssertFalse(model.applyKeypadInput(.decimal, to: .a))
+        XCTAssertTrue(model.applyKeypadInput(.toggleSign, to: .a))
+        XCTAssertEqual(model.text(for: .a), "-12.5")
+
+        XCTAssertTrue(model.applyKeypadInput(.delete, to: .a))
+        XCTAssertEqual(model.text(for: .a), "-12.")
+
+        XCTAssertTrue(model.applyKeypadInput(.clear, to: .a))
+        XCTAssertEqual(model.text(for: .a), "")
+    }
+
+    @MainActor
+    func testKeypadCanReplaceDefaultsAndCompleteCalculation() throws {
+        let suiteName = "CalculatorKeypadTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = CalculatorViewModel(userDefaults: defaults)
+
+        XCTAssertTrue(
+            model.applyKeypadInput(
+                .digit("2"),
+                to: .divisor,
+                replacingExisting: true
+            )
+        )
+        XCTAssertEqual(model.text(for: .divisor), "2")
+
+        XCTAssertTrue(model.applyKeypadInput(.digit("1"), to: .a))
+        XCTAssertTrue(model.applyKeypadInput(.digit("5"), to: .a))
+        XCTAssertTrue(model.applyKeypadInput(.digit("5"), to: .b))
+        model.calculate()
+
+        XCTAssertEqual(model.totalResult, "20")
+        XCTAssertEqual(model.dividedResult, "2.5")
+        XCTAssertEqual(model.visibleHistoryEntries.count, 1)
+    }
+
+    @MainActor
     func testHistoryRecordsOnlyExplicitSuccessfulCalculations() throws {
         let suiteName = "CalculatorHistoryTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

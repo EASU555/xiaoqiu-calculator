@@ -4,7 +4,9 @@ import UIKit
 struct CalculatorView: View {
     @StateObject private var model = CalculatorViewModel()
     @State private var showHistoryClearConfirmation = false
-    @FocusState private var focusedField: CalculatorField?
+    @State private var activeField: CalculatorField?
+    @State private var replaceActiveValue = false
+    @State private var isHistoryExpanded = false
     @Environment(\.accessibilityReduceTransparency)
     private var reduceTransparency
 
@@ -87,14 +89,20 @@ struct CalculatorView: View {
         }
         .onChange(of: model.invalidField) { field in
             if let field {
-                focusedField = field
+                activeField = field
+                replaceActiveValue = false
             }
         }
         .onChange(of: model.page) { _ in
-            focusedField = nil
+            resetActiveField()
+            isHistoryExpanded = false
         }
         .onChange(of: model.mode) { _ in
-            focusedField = nil
+            resetActiveField()
+            isHistoryExpanded = false
+        }
+        .onAppear {
+            resetActiveField()
         }
     }
 
@@ -127,7 +135,6 @@ struct CalculatorView: View {
                         .padding(.vertical, verticalPadding)
                         .frame(maxWidth: .infinity)
                 }
-                .scrollDismissesKeyboard(.interactively)
             }
         }
     }
@@ -153,25 +160,6 @@ struct CalculatorView: View {
                     : "清空当前页面的输入和结果"
             )
         }
-
-        ToolbarItemGroup(placement: .keyboard) {
-            Button(page == .counter ? "清零" : "清空") {
-                model.clear()
-            }
-
-            Spacer()
-
-            if page != .counter {
-                Button("计算") {
-                    model.calculate()
-                }
-                .fontWeight(.semibold)
-            }
-
-            Button("完成") {
-                focusedField = nil
-            }
-        }
     }
 
     private func calculatorPage(
@@ -191,6 +179,7 @@ struct CalculatorView: View {
             }
 
             inlineStatus
+            numericKeypad(useWideLayout: useWideLayout)
         }
         .frame(
             maxWidth: .infinity,
@@ -249,9 +238,6 @@ struct CalculatorView: View {
                     placeholder: "475"
                 )
             }
-
-            panelDivider
-            actionButtons(primaryTitle: "计算结果")
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .contentCard()
@@ -322,9 +308,6 @@ struct CalculatorView: View {
                     placeholder: "25"
                 )
             }
-
-            panelDivider
-            actionButtons(primaryTitle: "计算结果")
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .contentCard()
@@ -356,6 +339,7 @@ struct CalculatorView: View {
             historyPanel(useWideLayout: useWideLayout)
             basicWorkspace(useWideLayout: useWideLayout)
             inlineStatus
+            numericKeypad(useWideLayout: useWideLayout)
         }
         .frame(
             maxWidth: .infinity,
@@ -399,9 +383,6 @@ struct CalculatorView: View {
                     placeholder: "25"
                 )
             }
-
-            panelDivider
-            actionButtons(primaryTitle: "计算结果")
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .contentCard()
@@ -444,46 +425,91 @@ struct CalculatorView: View {
     }
 
     private func historyPanel(useWideLayout: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("历史记录")
-                        .font(.headline)
-                        .foregroundStyle(Color.primaryText)
-                    Text(historySubtitle)
-                        .font(.caption)
-                        .foregroundStyle(Color.faintText)
-                }
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Button {
+                    guard !model.visibleHistoryEntries.isEmpty else { return }
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isHistoryExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "clock.arrow.circlepath")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.appAccent)
+                            .accessibilityHidden(true)
 
-                Spacer()
+                        Text("历史")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.primaryText)
+
+                        if let latestEntry = model.visibleHistoryEntries.first {
+                            Text(latestEntry.expression)
+                                .font(.subheadline)
+                                .foregroundStyle(Color.mutedText)
+                                .lineLimit(1)
+
+                            Spacer(minLength: 4)
+
+                            Text(latestEntry.primaryResult)
+                                .font(
+                                    .system(
+                                        .subheadline,
+                                        design: .rounded,
+                                        weight: .semibold
+                                    )
+                                )
+                                .foregroundStyle(Color.appAccent)
+                                .monospacedDigit()
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.7)
+
+                            Image(
+                                systemName: isHistoryExpanded
+                                    ? "chevron.up"
+                                    : "chevron.down"
+                            )
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(Color.faintText)
+                            .accessibilityHidden(true)
+                        } else {
+                            Text("暂无记录，点击“计算”后自动保存")
+                                .font(.caption)
+                                .foregroundStyle(Color.faintText)
+                                .lineLimit(1)
+
+                            Spacer(minLength: 4)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+                .disabled(model.visibleHistoryEntries.isEmpty)
+                .accessibilityLabel(
+                    isHistoryExpanded ? "收起历史记录" : "展开历史记录"
+                )
 
                 Button {
                     if !model.visibleHistoryEntries.isEmpty {
                         showHistoryClearConfirmation = true
                     }
                 } label: {
-                    Label("清空", systemImage: "trash")
+                    Image(systemName: "trash")
                         .font(.subheadline.weight(.semibold))
+                        .frame(width: 30, height: 30)
                 }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.mutedText)
                 .disabled(model.visibleHistoryEntries.isEmpty)
+                .accessibilityLabel("清空历史记录")
             }
+            .padding(.horizontal, useWideLayout ? 18 : 14)
+            .frame(height: useWideLayout ? 58 : 54)
 
-            panelDivider
+            if isHistoryExpanded && !model.visibleHistoryEntries.isEmpty {
+                panelDivider
+                    .padding(.horizontal, useWideLayout ? 18 : 14)
 
-            if model.visibleHistoryEntries.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "clock.arrow.circlepath")
-                        .font(.system(size: useWideLayout ? 30 : 24))
-                        .foregroundStyle(Color.faintText)
-                    Text("暂无计算记录")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Color.mutedText)
-                    Text("正式计算后会自动保存在这里")
-                        .font(.caption)
-                        .foregroundStyle(Color.faintText)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(model.visibleHistoryEntries) { entry in
@@ -496,43 +522,21 @@ struct CalculatorView: View {
                             }
                         }
                     }
+                    .padding(useWideLayout ? 18 : 14)
                 }
+                .frame(height: useWideLayout ? 160 : 136)
                 .scrollIndicators(.visible)
             }
         }
-        .padding(20)
-        .frame(
-            maxWidth: .infinity,
-            minHeight: useWideLayout ? 250 : 180,
-            maxHeight: useWideLayout ? 320 : 240,
-            alignment: .topLeading
-        )
+        .frame(maxWidth: .infinity)
         .background(Color.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 26, style: .continuous)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .stroke(Color.border, lineWidth: 1)
         }
-        .shadow(color: Color.shadowTint, radius: 12, x: 0, y: 5)
-        .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .onTapGesture {
-            if !model.visibleHistoryEntries.isEmpty {
-                showHistoryClearConfirmation = true
-            }
-        }
+        .shadow(color: Color.shadowTint, radius: 8, x: 0, y: 3)
         .accessibilityElement(children: .contain)
-        .accessibilityHint("点击历史区域可清空当前模式的记录")
-    }
-
-    private var historySubtitle: String {
-        switch model.page {
-        case .calculator:
-            return model.mode.rawValue
-        case .basic:
-            return "基础运算"
-        case .counter:
-            return ""
-        }
     }
 
     private func historyRow(_ entry: CalculationHistoryEntry) -> some View {
@@ -675,70 +679,135 @@ struct CalculatorView: View {
         title: String,
         placeholder: String
     ) -> some View {
+        let value = model.text(for: field)
+
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Color.primaryText)
 
-            TextField(
-                placeholder,
-                text: Binding(
-                    get: { model.text(for: field) },
-                    set: { model.update($0, for: field) }
+            Button {
+                if activeField != field {
+                    activeField = field
+                    replaceActiveValue = true
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    if activeField == field {
+                        Circle()
+                            .fill(Color.appAccent)
+                            .frame(width: 7, height: 7)
+                            .accessibilityHidden(true)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    Text(value.isEmpty ? placeholder : value)
+                        .font(
+                            .system(
+                                .title3,
+                                design: .rounded,
+                                weight: .medium
+                            )
+                        )
+                        .foregroundStyle(
+                            value.isEmpty
+                                ? Color.faintText
+                                : Color.primaryText
+                        )
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
+                }
+                .padding(.horizontal, 15)
+                .frame(maxWidth: .infinity, minHeight: 54)
+                .background(Color.surfaceAlt)
+                .clipShape(
+                    RoundedRectangle(cornerRadius: 15, style: .continuous)
                 )
-            )
-            .font(.system(.title3, design: .rounded, weight: .medium))
-            .foregroundStyle(Color.primaryText)
-            .multilineTextAlignment(.trailing)
-            .keyboardType(.numbersAndPunctuation)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-            .focused($focusedField, equals: field)
-            .submitLabel(.done)
-            .onSubmit {
-                model.calculate()
+                .overlay {
+                    RoundedRectangle(cornerRadius: 15, style: .continuous)
+                        .stroke(
+                            fieldBorderColor(field),
+                            lineWidth: fieldBorderWidth(field)
+                        )
+                }
             }
-            .padding(.horizontal, 15)
-            .frame(height: 54)
-            .background(Color.surfaceAlt)
-            .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 15, style: .continuous)
-                    .stroke(
-                        fieldBorderColor(field),
-                        lineWidth: fieldBorderWidth(field)
-                    )
-            }
+            .buttonStyle(.plain)
             .accessibilityLabel(title)
-            .accessibilityHint("最多输入 64 个字符，支持负数和小数")
+            .accessibilityValue(
+                model.text(for: field).isEmpty
+                    ? "空"
+                    : model.text(for: field)
+            )
+            .accessibilityHint("选择后使用下方数字键盘输入")
         }
         .frame(maxWidth: .infinity)
     }
 
-    private func actionButtons(primaryTitle: String) -> some View {
-        HStack(spacing: 12) {
-            Button {
-                model.clear()
-            } label: {
-                Text("清空")
-                    .frame(maxWidth: .infinity)
-            }
-            .adaptiveSecondaryAction(
-                height: 56,
-                reduceTransparency: reduceTransparency
-            )
+    private func numericKeypad(useWideLayout: Bool) -> some View {
+        VStack(spacing: useWideLayout ? 12 : 10) {
+            HStack(spacing: 8) {
+                Text("数字键盘")
+                    .font(.headline)
+                    .foregroundStyle(Color.primaryText)
 
-            Button {
-                model.calculate()
-            } label: {
-                Label(primaryTitle, systemImage: "equal")
-                    .frame(maxWidth: .infinity)
+                Spacer()
+
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(Color.appAccent)
+                        .frame(width: 6, height: 6)
+                    Text("正在输入：\(activeFieldTitle)")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.mutedText)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.accentSoft)
+                .clipShape(Capsule())
             }
-            .adaptivePrimaryAction(
-                height: 56,
-                reduceTransparency: reduceTransparency
-            )
+
+            ForEach(keypadRows.indices, id: \.self) { rowIndex in
+                HStack(spacing: useWideLayout ? 10 : 8) {
+                    ForEach(keypadRows[rowIndex]) { key in
+                        Button {
+                            handleKeypadKey(key)
+                        } label: {
+                            Group {
+                                if let systemImage = key.systemImage {
+                                    Image(systemName: systemImage)
+                                } else {
+                                    Text(key.title)
+                                }
+                            }
+                            .font(
+                                key.isPrimary
+                                    ? .headline
+                                    : .title3.weight(.semibold)
+                            )
+                            .frame(maxWidth: .infinity)
+                            .frame(height: useWideLayout ? 52 : 48)
+                        }
+                        .buttonStyle(
+                            CalculatorKeyButtonStyle(
+                                isPrimary: key.isPrimary
+                            )
+                        )
+                        .accessibilityLabel(key.accessibilityLabel)
+                    }
+                }
+            }
         }
+        .padding(useWideLayout ? 16 : 14)
+        .frame(maxWidth: .infinity)
+        .background(Color.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color.border, lineWidth: 1)
+        }
+        .shadow(color: Color.shadowTint, radius: 10, x: 0, y: 4)
     }
 
     private func resultCard(
@@ -833,11 +902,82 @@ struct CalculatorView: View {
         if model.invalidField == field {
             return .errorText
         }
-        return focusedField == field ? .appAccent : .border
+        return activeField == field ? .appAccent : .border
     }
 
     private func fieldBorderWidth(_ field: CalculatorField) -> CGFloat {
-        model.invalidField == field || focusedField == field ? 2 : 1
+        model.invalidField == field || activeField == field ? 2 : 1
+    }
+
+    private var keypadRows: [[CalculatorKey]] {
+        [
+            [.digit("1"), .digit("2"), .digit("3"), .clear, .delete],
+            [.digit("4"), .digit("5"), .digit("6"), .toggleSign, .decimal],
+            [.digit("7"), .digit("8"), .digit("9"), .digit("0"), .calculate]
+        ]
+    }
+
+    private var activeFieldTitle: String {
+        guard let activeField else { return "请选择输入项" }
+
+        switch activeField {
+        case .a:
+            return "A 数据"
+        case .b:
+            return "B 数据"
+        case .divisor:
+            return "可调除数"
+        case .coefficient:
+            return "系数"
+        case .multiplier:
+            return "乘数"
+        case .addend:
+            return "加数"
+        case .fixedValue:
+            return "固定值"
+        case .operationValue:
+            return "运算值"
+        }
+    }
+
+    private func resetActiveField() {
+        switch model.page {
+        case .calculator:
+            activeField = model.mode == .standard ? .a : .multiplier
+        case .basic:
+            activeField = .operationValue
+        case .counter:
+            activeField = nil
+        }
+        replaceActiveValue = false
+    }
+
+    private func handleKeypadKey(_ key: CalculatorKey) {
+        if key == .calculate {
+            model.calculate()
+            replaceActiveValue = false
+            return
+        }
+
+        guard
+            let activeField,
+            let input = key.input
+        else {
+            return
+        }
+
+        let shouldReplace =
+            replaceActiveValue
+            && (key.isDigit || key == .decimal)
+        let didChange = model.applyKeypadInput(
+            input,
+            to: activeField,
+            replacingExisting: shouldReplace
+        )
+
+        if didChange {
+            replaceActiveValue = false
+        }
     }
 
     private func resultFont(for value: String) -> Font {
@@ -881,6 +1021,129 @@ struct CalculatorView: View {
         case .error:
             return .errorSoft
         }
+    }
+}
+
+private enum CalculatorKey: Identifiable, Equatable {
+    case digit(String)
+    case decimal
+    case clear
+    case delete
+    case toggleSign
+    case calculate
+
+    var id: String {
+        switch self {
+        case let .digit(value):
+            return "digit-\(value)"
+        case .decimal:
+            return "decimal"
+        case .clear:
+            return "clear"
+        case .delete:
+            return "delete"
+        case .toggleSign:
+            return "toggle-sign"
+        case .calculate:
+            return "calculate"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case let .digit(value):
+            return value
+        case .decimal:
+            return "."
+        case .clear:
+            return "C"
+        case .delete:
+            return ""
+        case .toggleSign:
+            return "±"
+        case .calculate:
+            return "计算"
+        }
+    }
+
+    var systemImage: String? {
+        self == .delete ? "delete.left" : nil
+    }
+
+    var accessibilityLabel: String {
+        switch self {
+        case let .digit(value):
+            return value
+        case .decimal:
+            return "小数点"
+        case .clear:
+            return "清空当前输入"
+        case .delete:
+            return "删除一位"
+        case .toggleSign:
+            return "切换正负号"
+        case .calculate:
+            return "计算"
+        }
+    }
+
+    var input: CalculatorKeypadInput? {
+        switch self {
+        case let .digit(value):
+            return .digit(value)
+        case .decimal:
+            return .decimal
+        case .clear:
+            return .clear
+        case .delete:
+            return .delete
+        case .toggleSign:
+            return .toggleSign
+        case .calculate:
+            return nil
+        }
+    }
+
+    var isDigit: Bool {
+        if case .digit = self {
+            return true
+        }
+        return false
+    }
+
+    var isPrimary: Bool {
+        self == .calculate
+    }
+}
+
+private struct CalculatorKeyButtonStyle: ButtonStyle {
+    let isPrimary: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(isPrimary ? Color.white : Color.primaryText)
+            .background(
+                isPrimary
+                    ? Color.appAccent
+                    : (
+                        configuration.isPressed
+                            ? Color.accentSoft
+                            : Color.surfaceAlt
+                    )
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                    .stroke(
+                        isPrimary ? Color.accentBorder : Color.border,
+                        lineWidth: 1
+                    )
+            }
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(
+                .easeOut(duration: 0.12),
+                value: configuration.isPressed
+            )
     }
 }
 
