@@ -16,6 +16,21 @@ enum CalculatorMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum CalculationHistoryKind: String, Codable {
+    case standard
+    case multiplyAdd
+    case basic
+}
+
+struct CalculationHistoryEntry: Identifiable, Codable, Equatable {
+    let id: UUID
+    let kind: CalculationHistoryKind
+    let expression: String
+    let primaryResult: String
+    let secondaryResult: String?
+    let createdAt: Date
+}
+
 @MainActor
 final class CalculatorViewModel: ObservableObject {
     enum StatusTone {
@@ -61,7 +76,11 @@ final class CalculatorViewModel: ObservableObject {
         "输入 A、B，结果会实时更新；可按需修改除数。"
     @Published private(set) var statusTone: StatusTone = .neutral
     @Published private(set) var invalidField: CalculatorField?
+    @Published private(set) var historyEntries: [CalculationHistoryEntry] = []
 
+    private let historyDefaultsKey = "xiaoqiu.calculationHistory.v1"
+    private let historyLimit = 50
+    private let userDefaults: UserDefaults
     private var statusStore: [String: (String, StatusTone)] = [
         "standard": (
             "输入 A、B，结果会实时更新；可按需修改除数。",
@@ -80,6 +99,11 @@ final class CalculatorViewModel: ObservableObject {
             .neutral
         )
     ]
+
+    init(userDefaults: UserDefaults = .standard) {
+        self.userDefaults = userDefaults
+        loadHistory()
+    }
 
     var subtitle: String {
         switch page {
@@ -106,6 +130,10 @@ final class CalculatorViewModel: ObservableObject {
     var basicFormula: String {
         "\(preview(fixedValueText)) \(basicOperation.rawValue)"
             + " \(preview(operationValueText)) ="
+    }
+
+    var visibleHistoryEntries: [CalculationHistoryEntry] {
+        historyEntries.filter { $0.kind == currentHistoryKind }
     }
 
     func text(for field: CalculatorField) -> String {
@@ -196,6 +224,20 @@ final class CalculatorViewModel: ObservableObject {
         }
     }
 
+    func clearHistory() {
+        let kind = currentHistoryKind
+        guard historyEntries.contains(where: { $0.kind == kind }) else {
+            return
+        }
+        historyEntries.removeAll { $0.kind == kind }
+        saveHistory()
+        setStatus(
+            "本页历史记录已清空。",
+            tone: .neutral,
+            key: statusKey
+        )
+    }
+
     func incrementCounter() {
         counter += 1
         setStatus(
@@ -239,6 +281,19 @@ final class CalculatorViewModel: ObservableObject {
             invalidField = nil
             totalResult = result.total
             dividedResult = result.divided
+            if explicit {
+                appendHistory(
+                    CalculationHistoryEntry(
+                        id: UUID(),
+                        kind: .standard,
+                        expression: "A \(aText) + B \(bText)",
+                        primaryResult: "总数 \(result.total)",
+                        secondaryResult:
+                            "B \(bText) ÷ \(divisorText) = \(result.divided)",
+                        createdAt: Date()
+                    )
+                )
+            }
             setStatus(
                 explicit ? "计算完成，已使用除数 \(divisorText)。" : "双结果已实时更新。",
                 tone: .success,
@@ -255,12 +310,26 @@ final class CalculatorViewModel: ObservableObject {
 
     private func calculateMultiplyAdd(explicit: Bool) {
         do {
-            multiplyAddResult = try CalculatorEngine.calculateMultiplyAdd(
+            let result = try CalculatorEngine.calculateMultiplyAdd(
                 coefficientText: coefficientText,
                 multiplierText: multiplierText,
                 addendText: addendText
             )
+            multiplyAddResult = result
             invalidField = nil
+            if explicit {
+                appendHistory(
+                    CalculationHistoryEntry(
+                        id: UUID(),
+                        kind: .multiplyAdd,
+                        expression:
+                            "\(coefficientText) × \(multiplierText) + \(addendText)",
+                        primaryResult: result,
+                        secondaryResult: nil,
+                        createdAt: Date()
+                    )
+                )
+            }
             setStatus(
                 explicit ? "乘加计算完成。" : "乘加结果已实时更新。",
                 tone: .success,
@@ -276,12 +345,26 @@ final class CalculatorViewModel: ObservableObject {
 
     private func calculateBasic(explicit: Bool) {
         do {
-            basicResult = try CalculatorEngine.calculateBasic(
+            let result = try CalculatorEngine.calculateBasic(
                 fixedValueText: fixedValueText,
                 operationValueText: operationValueText,
                 operation: basicOperation
             )
+            basicResult = result
             invalidField = nil
+            if explicit {
+                appendHistory(
+                    CalculationHistoryEntry(
+                        id: UUID(),
+                        kind: .basic,
+                        expression:
+                            "\(fixedValueText) \(basicOperation.rawValue) \(operationValueText)",
+                        primaryResult: result,
+                        secondaryResult: nil,
+                        createdAt: Date()
+                    )
+                )
+            }
             setStatus(
                 explicit ? "基础运算完成。" : "基础运算结果已实时更新。",
                 tone: .success,
@@ -406,6 +489,45 @@ final class CalculatorViewModel: ObservableObject {
         case .counter:
             return "counter"
         }
+    }
+
+    private var currentHistoryKind: CalculationHistoryKind {
+        switch page {
+        case .calculator:
+            return mode == .standard ? .standard : .multiplyAdd
+        case .basic:
+            return .basic
+        case .counter:
+            return .standard
+        }
+    }
+
+    private func appendHistory(_ entry: CalculationHistoryEntry) {
+        historyEntries.insert(entry, at: 0)
+        if historyEntries.count > historyLimit {
+            historyEntries.removeLast(historyEntries.count - historyLimit)
+        }
+        saveHistory()
+    }
+
+    private func loadHistory() {
+        guard
+            let data = userDefaults.data(forKey: historyDefaultsKey),
+            let stored = try? JSONDecoder().decode(
+                [CalculationHistoryEntry].self,
+                from: data
+            )
+        else {
+            return
+        }
+        historyEntries = Array(stored.prefix(historyLimit))
+    }
+
+    private func saveHistory() {
+        guard let data = try? JSONEncoder().encode(historyEntries) else {
+            return
+        }
+        userDefaults.set(data, forKey: historyDefaultsKey)
     }
 
     private func preview(_ text: String) -> String {

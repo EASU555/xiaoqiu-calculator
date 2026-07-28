@@ -213,22 +213,12 @@ struct CalculatorView: View {
             modePicker
                 .frame(maxWidth: useWideLayout ? 520 : .infinity)
 
+            historyPanel(useWideLayout: useWideLayout)
+
             if model.mode == .standard {
-                standardResults(useWideLayout: useWideLayout)
-
-                if useWideLayout {
-                    Spacer(minLength: 24)
-                }
-
-                standardInputPanel(useWideLayout: useWideLayout)
+                standardWorkspace(useWideLayout: useWideLayout)
             } else {
-                multiplyAddResults
-
-                if useWideLayout {
-                    Spacer(minLength: 24)
-                }
-
-                multiplyAddInputPanel(useWideLayout: useWideLayout)
+                multiplyAddWorkspace(useWideLayout: useWideLayout)
             }
         }
         .frame(
@@ -277,6 +267,21 @@ struct CalculatorView: View {
         .padding(4)
         .background(Color.controlBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    @ViewBuilder
+    private func standardWorkspace(useWideLayout: Bool) -> some View {
+        if useWideLayout {
+            HStack(alignment: .bottom, spacing: 16) {
+                standardInputPanel(useWideLayout: false)
+                standardResults(useWideLayout: false)
+            }
+        } else {
+            VStack(spacing: 14) {
+                standardInputPanel(useWideLayout: false)
+                standardResults(useWideLayout: false)
+            }
+        }
     }
 
     private func standardInputPanel(useWideLayout: Bool) -> some View {
@@ -432,18 +437,28 @@ struct CalculatorView: View {
         .cardStyle()
     }
 
+    @ViewBuilder
+    private func multiplyAddWorkspace(useWideLayout: Bool) -> some View {
+        if useWideLayout {
+            HStack(alignment: .bottom, spacing: 16) {
+                multiplyAddInputPanel(useWideLayout: false)
+                multiplyAddResults
+            }
+        } else {
+            VStack(spacing: 14) {
+                multiplyAddInputPanel(useWideLayout: false)
+                multiplyAddResults
+            }
+        }
+    }
+
     private func basicPage(
         useWideLayout: Bool,
         minHeight: CGFloat
     ) -> some View {
         VStack(spacing: 16) {
-            basicResults
-
-            if useWideLayout {
-                Spacer(minLength: 24)
-            }
-
-            basicInputPanel(useWideLayout: useWideLayout)
+            historyPanel(useWideLayout: useWideLayout)
+            basicWorkspace(useWideLayout: useWideLayout)
         }
         .frame(
             maxWidth: .infinity,
@@ -491,6 +506,21 @@ struct CalculatorView: View {
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .cardStyle()
+    }
+
+    @ViewBuilder
+    private func basicWorkspace(useWideLayout: Bool) -> some View {
+        if useWideLayout {
+            HStack(alignment: .bottom, spacing: 16) {
+                basicInputPanel(useWideLayout: false)
+                basicResults
+            }
+        } else {
+            VStack(spacing: 14) {
+                basicInputPanel(useWideLayout: false)
+                basicResults
+            }
+        }
     }
 
     private var operationControl: some View {
@@ -558,6 +588,116 @@ struct CalculatorView: View {
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .cardStyle()
+    }
+
+    private func historyPanel(useWideLayout: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text("历史记录")
+                    .font(.headline)
+                    .foregroundStyle(Color.primaryText)
+
+                Spacer()
+
+                Label("点击区域清空", systemImage: "trash")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(
+                        model.visibleHistoryEntries.isEmpty
+                            ? Color.faintText
+                            : Color.appAccent
+                    )
+            }
+
+            panelDivider
+
+            if model.visibleHistoryEntries.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "clock.arrow.circlepath")
+                        .font(.system(size: useWideLayout ? 30 : 24))
+                        .foregroundStyle(Color.faintText)
+                    Text("暂无计算记录")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.mutedText)
+                    Text("点击“计算结果”后会自动保存在这里")
+                        .font(.caption)
+                        .foregroundStyle(Color.faintText)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(model.visibleHistoryEntries) { entry in
+                            historyRow(entry)
+
+                            if entry.id != model.visibleHistoryEntries.last?.id {
+                                panelDivider
+                                    .padding(.vertical, 10)
+                            }
+                        }
+                    }
+                }
+                .scrollIndicators(.visible)
+            }
+        }
+        .padding(20)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: useWideLayout ? 190 : 160,
+            maxHeight: useWideLayout ? .infinity : nil,
+            alignment: .topLeading
+        )
+        .background(Color.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(Color.border, lineWidth: 1)
+        }
+        .shadow(color: Color.shadowTint, radius: 12, x: 0, y: 5)
+        .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .onTapGesture {
+            withAnimation(.easeOut(duration: 0.18)) {
+                model.clearHistory()
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityHint("点击可清空当前页面的历史记录")
+    }
+
+    private func historyRow(_ entry: CalculationHistoryEntry) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(entry.expression)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(Color.primaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+
+                if let secondaryResult = entry.secondaryResult {
+                    Text(secondaryResult)
+                        .font(.caption)
+                        .foregroundStyle(Color.mutedText)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                }
+            }
+
+            Spacer(minLength: 12)
+
+            VStack(alignment: .trailing, spacing: 5) {
+                Text(entry.primaryResult)
+                    .font(.system(.title3, design: .rounded, weight: .semibold))
+                    .foregroundStyle(Color.appAccent)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+
+                Text(entry.createdAt, style: .time)
+                    .font(.caption2)
+                    .foregroundStyle(Color.faintText)
+            }
+        }
+        .padding(.horizontal, 2)
+        .accessibilityElement(children: .combine)
     }
 
     private func counterPage(

@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 @testable import XiaoqiuCalculator
 
@@ -188,5 +189,64 @@ final class CalculatorEngineTests: XCTestCase {
                 divisorText: tinyDivisor
             )
         )
+    }
+
+    @MainActor
+    func testHistoryRecordsOnlyExplicitSuccessfulCalculations() throws {
+        let suiteName = "CalculatorHistoryTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let model = CalculatorViewModel(userDefaults: defaults)
+
+        model.update("592", for: .a)
+        model.update("3325", for: .b)
+        XCTAssertTrue(model.visibleHistoryEntries.isEmpty)
+
+        model.calculate()
+
+        XCTAssertEqual(model.visibleHistoryEntries.count, 1)
+        XCTAssertEqual(
+            model.visibleHistoryEntries.first?.expression,
+            "A 592 + B 3325"
+        )
+        XCTAssertEqual(
+            model.visibleHistoryEntries.first?.primaryResult,
+            "总数 3917"
+        )
+        XCTAssertEqual(
+            model.visibleHistoryEntries.first?.secondaryResult,
+            "B 3325 ÷ 475 = 7"
+        )
+    }
+
+    @MainActor
+    func testHistoryPersistsAndCanBeCleared() throws {
+        let suiteName = "CalculatorHistoryTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let firstModel = CalculatorViewModel(userDefaults: defaults)
+        firstModel.page = .basic
+        firstModel.update("25", for: .operationValue)
+        firstModel.calculate()
+
+        let restoredModel = CalculatorViewModel(userDefaults: defaults)
+        restoredModel.page = .basic
+        XCTAssertEqual(restoredModel.visibleHistoryEntries.count, 1)
+        XCTAssertEqual(
+            restoredModel.visibleHistoryEntries.first?.expression,
+            "475 + 25"
+        )
+        XCTAssertEqual(
+            restoredModel.visibleHistoryEntries.first?.primaryResult,
+            "500"
+        )
+
+        restoredModel.clearHistory()
+        XCTAssertTrue(restoredModel.visibleHistoryEntries.isEmpty)
+
+        let clearedModel = CalculatorViewModel(userDefaults: defaults)
+        clearedModel.page = .basic
+        XCTAssertTrue(clearedModel.visibleHistoryEntries.isEmpty)
     }
 }
