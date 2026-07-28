@@ -5,6 +5,10 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from calculator import (
+    ACCENT,
+    APP_BG,
+    SURFACE,
+    DEFAULT_APPEARANCE_MODE,
     DEFAULT_COUNTER_HOTKEY,
     DEFAULT_COUNTER_HOTKEY_CODE,
     HISTORY_LIMIT,
@@ -20,16 +24,20 @@ from calculator import (
     counter_shortcut_matches,
     empty_calculation_history,
     format_result,
+    history_scrollbar_needed,
     hotkey_display_name,
     hotkey_is_reserved,
     hotkey_matches_event,
     increment_counter_value,
+    load_appearance_mode,
     load_calculation_history,
     load_counter_hotkey,
     load_counter_hotkey_binding,
     normalize_hotkey,
     normalize_keycode,
     parse_number,
+    resolve_appearance_color,
+    save_appearance_mode,
     save_calculation_history,
     save_counter_hotkey,
 )
@@ -185,6 +193,40 @@ class CalculatorLogicTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 save_counter_hotkey("Escape", path)
 
+    def test_appearance_mode_settings_round_trip(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "appearance.json"
+            self.assertEqual(
+                load_appearance_mode(path),
+                DEFAULT_APPEARANCE_MODE,
+            )
+            self.assertEqual(save_appearance_mode("dark", path), "dark")
+            self.assertEqual(load_appearance_mode(path), "dark")
+            self.assertEqual(save_appearance_mode("light", path), "light")
+            self.assertEqual(load_appearance_mode(path), "light")
+            with self.assertRaises(ValueError):
+                save_appearance_mode("system", path)
+
+    def test_invalid_appearance_settings_fall_back_to_light(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "appearance.json"
+            path.write_text('{"appearance_mode": "unknown"}', encoding="utf-8")
+            self.assertEqual(
+                load_appearance_mode(path),
+                DEFAULT_APPEARANCE_MODE,
+            )
+            path.write_text("not json", encoding="utf-8")
+            self.assertEqual(
+                load_appearance_mode(path),
+                DEFAULT_APPEARANCE_MODE,
+            )
+
+    def test_dark_palette_restores_original_graphite_template(self) -> None:
+        self.assertEqual(resolve_appearance_color(APP_BG, "light"), "#F3F4F6")
+        self.assertEqual(resolve_appearance_color(APP_BG, "dark"), "#0D0F12")
+        self.assertEqual(resolve_appearance_color(SURFACE, "dark"), "#171A1F")
+        self.assertEqual(resolve_appearance_color(ACCENT, "dark"), "#F28C28")
+
     def test_history_limit_is_enforced_per_mode(self) -> None:
         histories = empty_calculation_history()
         for index in range(HISTORY_LIMIT + 5):
@@ -211,6 +253,12 @@ class CalculatorLogicTests(unittest.TestCase):
             "expression-2",
         )
         self.assertEqual(histories["basic"], [])
+
+    def test_history_scrollbar_rule_is_geometry_independent(self) -> None:
+        self.assertFalse(history_scrollbar_needed(0))
+        self.assertFalse(history_scrollbar_needed(1))
+        self.assertTrue(history_scrollbar_needed(2))
+        self.assertTrue(history_scrollbar_needed(HISTORY_LIMIT))
 
     def test_history_persists_across_reload(self) -> None:
         with TemporaryDirectory() as directory:
