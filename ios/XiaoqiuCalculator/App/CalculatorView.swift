@@ -681,7 +681,7 @@ struct CalculatorView: View {
     ) -> some View {
         let value = model.text(for: field)
 
-        VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Color.primaryText)
@@ -764,7 +764,7 @@ struct CalculatorView: View {
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(Color.accentSoft)
+                .background(Color.appAccent.opacity(0.12))
                 .clipShape(Capsule())
             }
 
@@ -1127,7 +1127,7 @@ private struct CalculatorKeyButtonStyle: ButtonStyle {
                     ? Color.appAccent
                     : (
                         configuration.isPressed
-                            ? Color.accentSoft
+                            ? Color.appAccent.opacity(0.12)
                             : Color.surfaceAlt
                     )
             )
