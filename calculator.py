@@ -7,6 +7,8 @@ import re
 import sys
 import tkinter as tk
 import tkinter.font as tkfont
+from dataclasses import asdict, dataclass
+from datetime import datetime
 from decimal import (
     Decimal,
     DecimalException,
@@ -15,6 +17,7 @@ from decimal import (
     localcontext,
 )
 from pathlib import Path
+from tkinter import messagebox
 
 import customtkinter as ctk
 
@@ -24,9 +27,14 @@ DEFAULT_COEFFICIENT = "475"
 DEFAULT_FIXED_VALUE = "475"
 DEFAULT_COUNTER_HOTKEY = "space"
 DEFAULT_COUNTER_HOTKEY_CODE = 32
+DEFAULT_APPEARANCE_MODE = "light"
+APPEARANCE_MODES = frozenset({"light", "dark"})
 MAX_INPUT_LENGTH = 64
 MAX_RESULT_LENGTH = 24
 CALCULATION_PRECISION = MAX_INPUT_LENGTH * 3
+HISTORY_LIMIT = 50
+HISTORY_KINDS = ("standard", "multiply_add", "basic")
+HISTORY_ROWS_BEFORE_SCROLL = 1
 NUMBER_PATTERN = re.compile(r"-?(?:\d+(?:\.\d*)?|\.\d+)$")
 EDITING_PATTERN = re.compile(r"^-?(?:\d*(?:\.\d*)?)?$")
 HOTKEY_PATTERN = re.compile(r"^[^\s<>]{1,64}$", re.UNICODE)
@@ -135,26 +143,38 @@ KEYCODE_DISPLAY_NAMES.update(
     {code: f"F{code - 111}" for code in range(112, 136)}
 )
 
-WINDOW_WIDTH = 500
-WINDOW_HEIGHT = 660
+WINDOW_WIDTH = 680
+WINDOW_HEIGHT = 780
 
-# Neutral graphite surfaces with a restrained burnt-orange accent.
-APP_BG = "#0D0F12"
-SURFACE = "#171A1F"
-SURFACE_ALT = "#1E2228"
-BORDER = "#303640"
-TEXT = "#F4F6F8"
-MUTED = "#A8B0BA"
-FAINT = "#7D8792"
-ACCENT = "#F28C28"
-ACCENT_HOVER = "#FFA44F"
-ACCENT_TEXT = "#19120C"
-ACCENT_SOFT = "#211C17"
-ACCENT_BORDER = "#704624"
-SUCCESS = "#74D18A"
-SUCCESS_SOFT = "#112419"
-ERROR = "#FF9191"
-ERROR_SOFT = "#351619"
+# Light keeps the current warm-neutral template; dark restores the original
+# graphite-and-orange template. CustomTkinter selects the matching tuple item.
+ColorValue = str | tuple[str, str]
+APP_BG: ColorValue = ("#F3F4F6", "#0D0F12")
+SURFACE: ColorValue = ("#FFFFFF", "#171A1F")
+SURFACE_ALT: ColorValue = ("#F7F7F5", "#1E2228")
+BORDER: ColorValue = ("#E0E3E7", "#303640")
+CONTROL_BG: ColorValue = ("#F7F8F9", "#1D2126")
+CONTROL_HOVER: ColorValue = ("#ECEFF2", "#292E35")
+DIVIDER: ColorValue = ("#ECEEF1", "#292E35")
+SCROLLBAR: ColorValue = ("#D2D7DD", "#3A414B")
+SCROLLBAR_HOVER: ColorValue = ("#B6BDC6", "#555E69")
+TEXT: ColorValue = ("#1B1D21", "#F4F6F8")
+MUTED: ColorValue = ("#646A73", "#A8B0BA")
+FAINT: ColorValue = ("#9298A1", "#7D8792")
+ACCENT: ColorValue = ("#F57C00", "#F28C28")
+ACCENT_HOVER: ColorValue = ("#DC6E00", "#FFA44F")
+ACCENT_TEXT: ColorValue = ("#FFFFFF", "#19120C")
+ACCENT_SOFT: ColorValue = ("#FFF1E5", "#211C17")
+ACCENT_SOFT_HOVER: ColorValue = ("#FFE4CF", "#332318")
+ACCENT_BORDER: ColorValue = ("#F5C69F", "#704624")
+SUCCESS: ColorValue = ("#2F7D55", "#74D18A")
+SUCCESS_SOFT: ColorValue = ("#EAF6EF", "#112419")
+ERROR: ColorValue = ("#C54444", "#FF9191")
+ERROR_SOFT: ColorValue = ("#FCEDED", "#351619")
+
+PANEL_RADIUS = 14
+CONTROL_RADIUS = 9
+BUTTON_RADIUS = 10
 
 
 class InputValidationError(ValueError):
@@ -371,11 +391,77 @@ def hotkey_matches_event(
     )
 
 
+def counter_shortcut_matches(
+    saved_keysym: str,
+    saved_keycode: object,
+    event_keysym: str,
+    event_keycode: object,
+) -> bool:
+    """Keep Space available while also honoring the user-defined shortcut."""
+    actual_code = normalize_keycode(event_keycode)
+    if actual_code == DEFAULT_COUNTER_HOTKEY_CODE:
+        return True
+    if isinstance(event_keysym, str) and event_keysym.casefold() == "space":
+        return True
+    return hotkey_matches_event(
+        saved_keysym,
+        saved_keycode,
+        event_keysym,
+        event_keycode,
+    )
+
+
 def settings_file_path() -> Path:
     """Return the per-user settings file path without touching the filesystem."""
     app_data = os.environ.get("APPDATA")
     base = Path(app_data) if app_data else Path.home() / ".config"
     return base / "XiaoqiuCalculator" / "settings.json"
+
+
+def appearance_file_path() -> Path:
+    """Return the per-user appearance path without touching the filesystem."""
+    return settings_file_path().with_name("appearance.json")
+
+
+def resolve_appearance_color(color: ColorValue, mode: str) -> str:
+    """Resolve one light/dark color tuple for Tk and native Windows APIs."""
+    if isinstance(color, tuple):
+        return color[1] if mode == "dark" else color[0]
+    return color
+
+
+def load_appearance_mode(path: Path | None = None) -> str:
+    """Load the saved app appearance, falling back to the light template."""
+    target = path or appearance_file_path()
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+        mode = payload.get("appearance_mode")
+    except (OSError, ValueError, AttributeError):
+        return DEFAULT_APPEARANCE_MODE
+    return mode if mode in APPEARANCE_MODES else DEFAULT_APPEARANCE_MODE
+
+
+def save_appearance_mode(
+    mode: str,
+    path: Path | None = None,
+) -> str:
+    """Atomically persist an explicitly selected light or dark template."""
+    if mode not in APPEARANCE_MODES:
+        raise ValueError("不支持的外观模式。")
+    target = path or appearance_file_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(".tmp")
+    temporary.write_text(
+        json.dumps(
+            {"appearance_mode": mode},
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(target)
+    return mode
 
 
 def load_counter_hotkey_binding(
@@ -436,13 +522,151 @@ def save_counter_hotkey(
     return normalized
 
 
+@dataclass(frozen=True)
+class CalculationHistoryEntry:
+    """One explicit, successful calculation saved for a single mode."""
+
+    kind: str
+    expression: str
+    primary_result: str
+    secondary_result: str | None
+    created_at: str
+
+
+def history_file_path() -> Path:
+    """Return the per-user history path without touching the filesystem."""
+    return settings_file_path().with_name("history.json")
+
+
+def empty_calculation_history() -> dict[str, list[CalculationHistoryEntry]]:
+    """Create an isolated history bucket for every calculation mode."""
+    return {kind: [] for kind in HISTORY_KINDS}
+
+
+def history_scrollbar_needed(entry_count: int) -> bool:
+    """Decide scrollbar emphasis without observing live widget geometry."""
+    return entry_count > HISTORY_ROWS_BEFORE_SCROLL
+
+
+def append_calculation_history(
+    histories: dict[str, list[CalculationHistoryEntry]],
+    entry: CalculationHistoryEntry,
+    *,
+    limit: int = HISTORY_LIMIT,
+) -> None:
+    """Insert newest-first and enforce the limit independently per mode."""
+    if entry.kind not in HISTORY_KINDS:
+        raise ValueError("不支持的历史记录类型。")
+    if limit < 1:
+        raise ValueError("历史记录上限必须大于 0。")
+    bucket = histories.setdefault(entry.kind, [])
+    bucket.insert(0, entry)
+    del bucket[limit:]
+
+
+def clear_calculation_history(
+    histories: dict[str, list[CalculationHistoryEntry]],
+    kind: str,
+) -> None:
+    """Clear only the requested mode while preserving every other mode."""
+    if kind not in HISTORY_KINDS:
+        raise ValueError("不支持的历史记录类型。")
+    histories[kind] = []
+
+
+def load_calculation_history(
+    path: Path | None = None,
+) -> dict[str, list[CalculationHistoryEntry]]:
+    """Load versioned history data, safely ignoring malformed records."""
+    histories = empty_calculation_history()
+    target = path or history_file_path()
+    try:
+        payload = json.loads(target.read_text(encoding="utf-8"))
+        stored_histories = payload.get("histories", {})
+        if not isinstance(stored_histories, dict):
+            return histories
+        for kind in HISTORY_KINDS:
+            records = stored_histories.get(kind, [])
+            if not isinstance(records, list):
+                continue
+            for record in records:
+                if not isinstance(record, dict):
+                    continue
+                expression = record.get("expression")
+                primary_result = record.get("primary_result")
+                secondary_result = record.get("secondary_result")
+                created_at = record.get("created_at")
+                if not all(
+                    isinstance(value, str)
+                    for value in (expression, primary_result, created_at)
+                ):
+                    continue
+                if secondary_result is not None and not isinstance(
+                    secondary_result,
+                    str,
+                ):
+                    continue
+                histories[kind].append(
+                    CalculationHistoryEntry(
+                        kind=kind,
+                        expression=expression,
+                        primary_result=primary_result,
+                        secondary_result=secondary_result,
+                        created_at=created_at,
+                    )
+                )
+                if len(histories[kind]) >= HISTORY_LIMIT:
+                    break
+    except (OSError, ValueError, AttributeError):
+        return histories
+    return histories
+
+
+def save_calculation_history(
+    histories: dict[str, list[CalculationHistoryEntry]],
+    path: Path | None = None,
+) -> None:
+    """Atomically persist isolated calculation histories."""
+    target = path or history_file_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(".tmp")
+    payload = {
+        "version": 1,
+        "histories": {
+            kind: [asdict(entry) for entry in histories.get(kind, [])[:HISTORY_LIMIT]]
+            for kind in HISTORY_KINDS
+        },
+    }
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(target)
+
+
+def enable_windows_dpi_awareness() -> None:
+    """Ask Windows for per-monitor DPI scaling before Tk creates a window."""
+    if sys.platform != "win32":
+        return
+    try:
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+    except (AttributeError, OSError):
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
+        except (AttributeError, OSError):
+            pass
+
+
 class CalculatorApp(ctk.CTk):
     def __init__(self) -> None:
+        appearance_mode = load_appearance_mode()
+        ctk.set_appearance_mode(appearance_mode)
         super().__init__()
+        self.appearance_mode = appearance_mode
         self.title("小秋计算器")
         self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}")
-        self.minsize(460, 640)
-        self.resizable(True, False)
+        self.minsize(440, 400)
+        self.resizable(True, True)
         self.configure(fg_color=APP_BG)
 
         self.font_family = self._choose_font_family()
@@ -467,6 +691,9 @@ class CalculatorApp(ctk.CTk):
         self.basic_result = tk.StringVar(value="—")
         self.basic_formula = tk.StringVar(value=f"{DEFAULT_FIXED_VALUE} + — =")
         self.counter_value = tk.IntVar(value=0)
+        self.calculation_history = load_calculation_history()
+        self._history_views: dict[str, ctk.CTkScrollableFrame] = {}
+        self._history_count_labels: dict[str, ctk.CTkLabel] = {}
         (
             self.counter_hotkey,
             self.counter_hotkey_code,
@@ -486,7 +713,7 @@ class CalculatorApp(ctk.CTk):
                 "固定值默认 475；选择运算符后结果会实时更新。",
                 "neutral",
             ),
-            "counter": ("按 +1 或已绑定快捷键开始计数。", "neutral"),
+            "counter": ("按 +1、Space 或已绑定快捷键开始计数。", "neutral"),
         }
         self.status_text = tk.StringVar(value=self._page_status["standard"][0])
         self._invalid_entries: set[ctk.CTkEntry] = set()
@@ -514,19 +741,20 @@ class CalculatorApp(ctk.CTk):
 
     def _create_fonts(self) -> None:
         self.title_font = ctk.CTkFont(self.font_family, 20, "bold")
-        self.subtitle_font = ctk.CTkFont(self.font_family, 10)
-        self.section_font = ctk.CTkFont(self.font_family, 11, "bold")
-        self.label_font = ctk.CTkFont(self.font_family, 10, "bold")
-        self.body_font = ctk.CTkFont(self.font_family, 10)
-        self.caption_font = ctk.CTkFont(self.font_family, 9)
-        self.input_font = ctk.CTkFont(self.font_family, 14)
-        self.button_font = ctk.CTkFont(self.font_family, 11, "bold")
-        self.result_font = ctk.CTkFont(self.font_family, 23, "bold")
+        self.subtitle_font = ctk.CTkFont(self.font_family, 11)
+        self.section_font = ctk.CTkFont(self.font_family, 13, "bold")
+        self.label_font = ctk.CTkFont(self.font_family, 12, "bold")
+        self.body_font = ctk.CTkFont(self.font_family, 11)
+        self.caption_font = ctk.CTkFont(self.font_family, 10)
+        self.input_font = ctk.CTkFont(self.font_family, 15)
+        self.button_font = ctk.CTkFont(self.font_family, 12, "bold")
+        self.result_font = ctk.CTkFont(self.font_family, 22, "bold")
         self.result_medium_font = ctk.CTkFont(self.font_family, 18, "bold")
         self.result_compact_font = ctk.CTkFont(self.font_family, 14, "bold")
-        self.counter_font = ctk.CTkFont(self.font_family, 54, "bold")
-        self.counter_medium_font = ctk.CTkFont(self.font_family, 42, "bold")
-        self.counter_compact_font = ctk.CTkFont(self.font_family, 30, "bold")
+        self.history_result_font = ctk.CTkFont(self.font_family, 12, "bold")
+        self.counter_font = ctk.CTkFont(self.font_family, 68, "bold")
+        self.counter_medium_font = ctk.CTkFont(self.font_family, 52, "bold")
+        self.counter_compact_font = ctk.CTkFont(self.font_family, 36, "bold")
 
     def _create_app_icon(self) -> None:
         try:
@@ -536,17 +764,21 @@ class CalculatorApp(ctk.CTk):
             pass
 
         icon = tk.PhotoImage(width=32, height=32)
-        orange = ACCENT
+        orange = resolve_appearance_color(ACCENT, self.appearance_mode)
+        icon_text = resolve_appearance_color(
+            ACCENT_TEXT,
+            self.appearance_mode,
+        )
         for y in range(4, 28):
             inset = 2 if y in (4, 5, 26, 27) else 1 if y in (6, 25) else 0
             icon.put(orange, to=(4 + inset, y, 28 - inset, y + 1))
-        icon.put(ACCENT_TEXT, to=(9, 14, 23, 18))
-        icon.put(ACCENT_TEXT, to=(14, 9, 18, 23))
+        icon.put(icon_text, to=(9, 14, 23, 18))
+        icon.put(icon_text, to=(14, 9, 18, 23))
         self.iconphoto(True, icon)
         self._app_icon = icon
 
     def _apply_windows_titlebar(self) -> None:
-        """Match the native Windows title bar to the graphite app palette."""
+        """Match the native Windows title bar to the light app palette."""
         if sys.platform != "win32":
             return
 
@@ -561,10 +793,21 @@ class CalculatorApp(ctk.CTk):
                 )
                 return red | (green << 8) | (blue << 16)
 
-            dark_mode = ctypes.c_int(1)
-            caption = ctypes.c_int(colorref(APP_BG))
-            caption_text = ctypes.c_int(colorref(TEXT))
-            border = ctypes.c_int(colorref(BORDER))
+            dark_mode = ctypes.c_int(1 if self.appearance_mode == "dark" else 0)
+            caption = ctypes.c_int(
+                colorref(
+                    resolve_appearance_color(
+                        APP_BG,
+                        self.appearance_mode,
+                    )
+                )
+            )
+            caption_text = ctypes.c_int(
+                colorref(resolve_appearance_color(TEXT, self.appearance_mode))
+            )
+            border = ctypes.c_int(
+                colorref(resolve_appearance_color(BORDER, self.appearance_mode))
+            )
             dwm = ctypes.windll.dwmapi.DwmSetWindowAttribute
 
             dwm(hwnd, 20, ctypes.byref(dark_mode), ctypes.sizeof(dark_mode))
@@ -579,7 +822,7 @@ class CalculatorApp(ctk.CTk):
         self.grid_rowconfigure(0, weight=1)
 
         content = ctk.CTkFrame(self, fg_color="transparent")
-        content.grid(row=0, column=0, sticky="nsew", padx=24, pady=(22, 18))
+        content.grid(row=0, column=0, sticky="nsew", padx=20, pady=(18, 14))
         content.grid_columnconfigure(0, weight=1)
         content.grid_rowconfigure(1, weight=1)
 
@@ -589,10 +832,27 @@ class CalculatorApp(ctk.CTk):
         page_host.grid_columnconfigure(0, weight=1)
         page_host.grid_rowconfigure(0, weight=1)
 
-        self.calculator_page = ctk.CTkFrame(page_host, fg_color="transparent")
+        page_options = {
+            "fg_color": "transparent",
+            "corner_radius": 0,
+            "scrollbar_fg_color": "transparent",
+            "scrollbar_button_color": SCROLLBAR,
+            "scrollbar_button_hover_color": SCROLLBAR_HOVER,
+        }
+        self.calculator_page_container = ctk.CTkFrame(
+            page_host,
+            fg_color="transparent",
+        )
+        self.calculator_page_container.grid(row=0, column=0, sticky="nsew")
+        self.calculator_page_container.grid_columnconfigure(0, weight=1)
+        self.calculator_page_container.grid_rowconfigure(0, weight=1)
+        self.calculator_page = ctk.CTkScrollableFrame(
+            self.calculator_page_container,
+            **page_options,
+        )
         self.calculator_page.grid(row=0, column=0, sticky="nsew")
         self.calculator_page.grid_columnconfigure(0, weight=1)
-        self.calculator_page.grid_rowconfigure(1, weight=1)
+        self._polish_scrollbar(self.calculator_page)
         self._build_calculation_mode_switch(self.calculator_page)
 
         calculation_host = ctk.CTkFrame(
@@ -609,9 +869,12 @@ class CalculatorApp(ctk.CTk):
         )
         self.standard_calculator_panel.grid(row=0, column=0, sticky="nsew")
         self.standard_calculator_panel.grid_columnconfigure(0, weight=1)
+        self._build_history_panel(
+            self.standard_calculator_panel,
+            "standard",
+            row=0,
+        )
         self._build_input_card(self.standard_calculator_panel)
-        self._build_actions(self.standard_calculator_panel)
-        self._build_results(self.standard_calculator_panel)
 
         self.multiply_add_panel = ctk.CTkFrame(
             calculation_host,
@@ -619,21 +882,50 @@ class CalculatorApp(ctk.CTk):
         )
         self.multiply_add_panel.grid(row=0, column=0, sticky="nsew")
         self.multiply_add_panel.grid_columnconfigure(0, weight=1)
+        self._build_history_panel(
+            self.multiply_add_panel,
+            "multiply_add",
+            row=0,
+        )
         self._build_multiply_add_panel(self.multiply_add_panel)
         self.standard_calculator_panel.tkraise()
 
-        self.basic_page = ctk.CTkFrame(page_host, fg_color="transparent")
+        self.basic_page_container = ctk.CTkFrame(
+            page_host,
+            fg_color="transparent",
+        )
+        self.basic_page_container.grid(row=0, column=0, sticky="nsew")
+        self.basic_page_container.grid_columnconfigure(0, weight=1)
+        self.basic_page_container.grid_rowconfigure(0, weight=1)
+        self.basic_page = ctk.CTkScrollableFrame(
+            self.basic_page_container,
+            **page_options,
+        )
         self.basic_page.grid(row=0, column=0, sticky="nsew")
         self.basic_page.grid_columnconfigure(0, weight=1)
+        self._polish_scrollbar(self.basic_page)
         self._build_basic_arithmetic_page(self.basic_page)
 
-        self.counter_page = ctk.CTkFrame(page_host, fg_color="transparent")
+        self.counter_page_container = ctk.CTkFrame(
+            page_host,
+            fg_color="transparent",
+        )
+        self.counter_page_container.grid(row=0, column=0, sticky="nsew")
+        self.counter_page_container.grid_columnconfigure(0, weight=1)
+        self.counter_page_container.grid_rowconfigure(0, weight=1)
+        self.counter_page = ctk.CTkScrollableFrame(
+            self.counter_page_container,
+            **page_options,
+        )
         self.counter_page.grid(row=0, column=0, sticky="nsew")
         self.counter_page.grid_columnconfigure(0, weight=1)
+        self._polish_scrollbar(self.counter_page)
         self._build_counter_page(self.counter_page)
 
-        self.calculator_page.tkraise()
+        self.calculator_page_container.tkraise()
         self._build_status(content)
+        for kind in HISTORY_KINDS:
+            self._render_history(kind)
 
     def _build_header(self, parent: ctk.CTkFrame) -> None:
         header = ctk.CTkFrame(parent, fg_color="transparent")
@@ -642,19 +934,18 @@ class CalculatorApp(ctk.CTk):
 
         badge = ctk.CTkFrame(
             header,
-            width=44,
-            height=44,
-            corner_radius=13,
+            width=42,
+            height=42,
+            corner_radius=12,
             fg_color=ACCENT_SOFT,
-            border_width=1,
-            border_color=ACCENT_BORDER,
+            border_width=0,
         )
         badge.grid(row=0, column=0, rowspan=2, sticky="nw", padx=(0, 12))
         badge.grid_propagate(False)
         ctk.CTkLabel(
             badge,
             text="Σ",
-            font=ctk.CTkFont(self.font_family, 21, "bold"),
+            font=ctk.CTkFont(self.font_family, 22, "bold"),
             text_color=ACCENT,
         ).place(relx=0.5, rely=0.5, anchor="center")
 
@@ -675,10 +966,10 @@ class CalculatorApp(ctk.CTk):
 
         navigation = ctk.CTkFrame(
             header,
-            corner_radius=10,
+            corner_radius=CONTROL_RADIUS,
             border_width=1,
             border_color=BORDER,
-            fg_color=SURFACE_ALT,
+            fg_color=SURFACE,
         )
         navigation.grid(
             row=0,
@@ -691,13 +982,12 @@ class CalculatorApp(ctk.CTk):
         self.calculator_nav_button = ctk.CTkButton(
             navigation,
             text="计算器",
-            width=66,
+            width=52,
             height=32,
-            corner_radius=8,
-            border_width=1,
-            border_color=ACCENT_BORDER,
+            corner_radius=7,
+            border_width=0,
             fg_color=ACCENT_SOFT,
-            hover_color=ACCENT_BORDER,
+            hover_color=ACCENT_SOFT_HOVER,
             text_color=ACCENT,
             font=self.caption_font,
             command=self.show_calculator_page,
@@ -707,12 +997,12 @@ class CalculatorApp(ctk.CTk):
         self.basic_nav_button = ctk.CTkButton(
             navigation,
             text="基础运算",
-            width=76,
+            width=60,
             height=32,
-            corner_radius=8,
+            corner_radius=7,
             border_width=0,
             fg_color="transparent",
-            hover_color=BORDER,
+            hover_color=CONTROL_HOVER,
             text_color=MUTED,
             font=self.caption_font,
             command=self.show_basic_arithmetic_page,
@@ -722,12 +1012,12 @@ class CalculatorApp(ctk.CTk):
         self.counter_nav_button = ctk.CTkButton(
             navigation,
             text="快捷计数",
-            width=76,
+            width=60,
             height=32,
-            corner_radius=8,
+            corner_radius=7,
             border_width=0,
             fg_color="transparent",
-            hover_color=BORDER,
+            hover_color=CONTROL_HOVER,
             text_color=MUTED,
             font=self.caption_font,
             command=self.show_counter_page,
@@ -735,6 +1025,26 @@ class CalculatorApp(ctk.CTk):
         self.counter_nav_button.grid(
             row=0,
             column=2,
+            padx=(0, 3),
+            pady=3,
+        )
+
+        self.theme_button = ctk.CTkButton(
+            navigation,
+            text=self._theme_button_text(),
+            width=34,
+            height=32,
+            corner_radius=7,
+            border_width=0,
+            fg_color="transparent",
+            hover_color=CONTROL_HOVER,
+            text_color=MUTED,
+            font=ctk.CTkFont(self.font_family, 14, "bold"),
+            command=self.toggle_appearance_mode,
+        )
+        self.theme_button.grid(
+            row=0,
+            column=3,
             padx=(0, 3),
             pady=3,
         )
@@ -753,8 +1063,8 @@ class CalculatorApp(ctk.CTk):
 
         selector = ctk.CTkFrame(
             mode_row,
-            corner_radius=10,
-            fg_color=SURFACE_ALT,
+            corner_radius=CONTROL_RADIUS,
+            fg_color=SURFACE,
             border_width=1,
             border_color=BORDER,
         )
@@ -765,11 +1075,10 @@ class CalculatorApp(ctk.CTk):
             text="双结果",
             width=88,
             height=32,
-            corner_radius=8,
-            border_width=1,
-            border_color=ACCENT_BORDER,
+            corner_radius=7,
+            border_width=0,
             fg_color=ACCENT_SOFT,
-            hover_color=ACCENT_BORDER,
+            hover_color=ACCENT_SOFT_HOVER,
             text_color=ACCENT,
             font=self.caption_font,
             command=self.show_standard_mode,
@@ -781,10 +1090,10 @@ class CalculatorApp(ctk.CTk):
             text="乘加计算",
             width=96,
             height=32,
-            corner_radius=8,
+            corner_radius=7,
             border_width=0,
             fg_color="transparent",
-            hover_color=BORDER,
+            hover_color=CONTROL_HOVER,
             text_color=MUTED,
             font=self.caption_font,
             command=self.show_multiply_add_mode,
@@ -796,16 +1105,326 @@ class CalculatorApp(ctk.CTk):
             pady=3,
         )
 
-    def _build_input_card(self, parent: ctk.CTkFrame) -> None:
+    def _create_shadowed_panel(
+        self,
+        parent: ctk.CTkFrame,
+        *,
+        row: int,
+        pady: tuple[int, int] = (0, 0),
+    ) -> ctk.CTkFrame:
+        """Create a clean tonal work surface without aliased fake shadows."""
         card = ctk.CTkFrame(
             parent,
-            corner_radius=16,
+            corner_radius=PANEL_RADIUS,
             fg_color=SURFACE,
-            border_width=1,
-            border_color=BORDER,
+            border_width=0,
         )
-        card.grid(row=0, column=0, sticky="ew")
+        card.grid(
+            row=row,
+            column=0,
+            sticky="ew",
+            pady=pady,
+        )
         card.grid_columnconfigure(0, weight=1)
+        return card
+
+    @staticmethod
+    def _polish_scrollbar(
+        scrollable: ctk.CTkScrollableFrame,
+        *,
+        height: int | None = None,
+    ) -> None:
+        options: dict[str, object] = {
+            "width": 10,
+            "corner_radius": 5,
+            "border_spacing": 2,
+        }
+        if height is not None:
+            options["height"] = height
+        scrollable._scrollbar.configure(**options)
+
+    def _build_history_panel(
+        self,
+        parent: ctk.CTkFrame,
+        kind: str,
+        *,
+        row: int,
+    ) -> None:
+        card = self._create_shadowed_panel(parent, row=row)
+
+        header = ctk.CTkFrame(card, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=18, pady=(13, 8))
+        header.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            header,
+            text="历史记录",
+            font=self.section_font,
+            text_color=TEXT,
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w")
+
+        count_label = ctk.CTkLabel(
+            header,
+            text=f"0 / {HISTORY_LIMIT}",
+            font=self.caption_font,
+            text_color=FAINT,
+        )
+        count_label.grid(row=0, column=1, padx=(8, 10))
+        self._history_count_labels[kind] = count_label
+
+        ctk.CTkButton(
+            header,
+            text="清空历史",
+            width=80,
+            height=28,
+            corner_radius=7,
+            border_width=0,
+            fg_color=CONTROL_BG,
+            hover_color=ERROR_SOFT,
+            text_color=MUTED,
+            font=self.caption_font,
+            command=lambda value=kind: self._confirm_clear_history(value),
+        ).grid(row=0, column=2, sticky="e")
+
+        ledger = ctk.CTkScrollableFrame(
+            card,
+            height=72,
+            corner_radius=10,
+            fg_color=CONTROL_BG,
+            scrollbar_fg_color="transparent",
+            scrollbar_button_color=SCROLLBAR,
+            scrollbar_button_hover_color=SCROLLBAR_HOVER,
+        )
+        # CustomTkinter 6.0 gives vertical scrollbars a 200 px minimum;
+        # constrain this bounded ledger so high-DPI windows stay compact.
+        self._polish_scrollbar(ledger, height=72)
+        ledger.grid(
+            row=1,
+            column=0,
+            sticky="ew",
+            padx=18,
+            pady=(0, 16),
+        )
+        ledger.grid_columnconfigure(0, weight=1)
+        self._history_views[kind] = ledger
+
+    @staticmethod
+    def _history_time_label(created_at: str) -> str:
+        try:
+            return datetime.fromisoformat(created_at).strftime("%m-%d %H:%M")
+        except ValueError:
+            return ""
+
+    def _render_history(self, kind: str) -> None:
+        ledger = self._history_views.get(kind)
+        count_label = self._history_count_labels.get(kind)
+        if ledger is None or count_label is None:
+            return
+        for child in ledger.winfo_children():
+            child.destroy()
+
+        entries = self.calculation_history.get(kind, [])
+        count_label.configure(text=f"{len(entries)} / {HISTORY_LIMIT}")
+        show_scrollbar = history_scrollbar_needed(len(entries))
+        ledger._scrollbar.configure(
+            button_color=SCROLLBAR if show_scrollbar else CONTROL_BG,
+            button_hover_color=(
+                SCROLLBAR_HOVER if show_scrollbar else CONTROL_BG
+            ),
+        )
+        if not entries:
+            empty = ctk.CTkFrame(ledger, fg_color="transparent")
+            empty.grid(row=0, column=0, sticky="ew", padx=12, pady=13)
+            empty.grid_columnconfigure(0, weight=1)
+            ctk.CTkLabel(
+                empty,
+                text="暂无计算记录",
+                font=self.label_font,
+                text_color=MUTED,
+            ).grid(row=0, column=0)
+            ctk.CTkLabel(
+                empty,
+                text="点击“计算结果”或按 Enter 后会保存在这里",
+                font=self.caption_font,
+                text_color=FAINT,
+            ).grid(row=1, column=0, pady=(4, 0))
+            return
+
+        for index, entry in enumerate(entries):
+            row = ctk.CTkFrame(ledger, fg_color="transparent")
+            row.grid(
+                row=index * 2,
+                column=0,
+                sticky="ew",
+                padx=10,
+                pady=(8 if index == 0 else 6, 5),
+            )
+            row.grid_columnconfigure(0, weight=1)
+            ctk.CTkLabel(
+                row,
+                text=entry.expression,
+                font=self.body_font,
+                text_color=TEXT,
+                anchor="w",
+            ).grid(row=0, column=0, sticky="w")
+            ctk.CTkLabel(
+                row,
+                text=self._history_time_label(entry.created_at),
+                font=self.caption_font,
+                text_color=FAINT,
+                anchor="e",
+            ).grid(row=0, column=1, sticky="e", padx=(10, 0))
+            ctk.CTkLabel(
+                row,
+                text=entry.primary_result,
+                font=self.history_result_font,
+                text_color=ACCENT,
+                anchor="w",
+            ).grid(row=1, column=0, sticky="w", pady=(3, 0))
+            if entry.secondary_result:
+                ctk.CTkLabel(
+                    row,
+                    text=entry.secondary_result,
+                    font=self.caption_font,
+                    text_color=MUTED,
+                    anchor="e",
+                ).grid(
+                    row=1,
+                    column=1,
+                    sticky="e",
+                    padx=(10, 0),
+                    pady=(3, 0),
+                )
+            if index < len(entries) - 1:
+                ctk.CTkFrame(
+                    ledger,
+                    height=1,
+                    corner_radius=0,
+                    fg_color=DIVIDER,
+                ).grid(
+                    row=index * 2 + 1,
+                    column=0,
+                    sticky="ew",
+                    padx=10,
+                )
+
+    def _confirm_clear_history(self, kind: str) -> None:
+        if not self.calculation_history.get(kind):
+            self._set_status("本页还没有历史记录。", tone="neutral")
+            return
+        kind_name = {
+            "standard": "双结果",
+            "multiply_add": "乘加计算",
+            "basic": "基础运算",
+        }[kind]
+        confirmed = messagebox.askyesno(
+            "清空历史",
+            f"确定清空“{kind_name}”的全部历史记录吗？\n"
+            "其他计算模式的历史不会受影响。",
+            parent=self,
+            icon="warning",
+            default=messagebox.NO,
+        )
+        if not confirmed:
+            return
+
+        previous = list(self.calculation_history[kind])
+        clear_calculation_history(self.calculation_history, kind)
+        try:
+            save_calculation_history(self.calculation_history)
+        except OSError:
+            self.calculation_history[kind] = previous
+            self._set_status("历史记录清空失败，请稍后重试。", tone="error")
+            return
+        self._render_history(kind)
+        self._set_status("本页历史记录已清空。", tone="neutral")
+
+    def _record_history(
+        self,
+        kind: str,
+        expression: str,
+        primary_result: str,
+        secondary_result: str | None = None,
+    ) -> bool:
+        entry = CalculationHistoryEntry(
+            kind=kind,
+            expression=expression,
+            primary_result=primary_result,
+            secondary_result=secondary_result,
+            created_at=datetime.now().astimezone().isoformat(timespec="seconds"),
+        )
+        previous = list(self.calculation_history.get(kind, []))
+        append_calculation_history(self.calculation_history, entry)
+        try:
+            save_calculation_history(self.calculation_history)
+        except OSError:
+            self.calculation_history[kind] = previous
+            return False
+        self._render_history(kind)
+        return True
+
+    def _add_inline_result(
+        self,
+        parent: ctk.CTkFrame,
+        *,
+        column: int,
+        title: str,
+        formula: str | tk.StringVar,
+        variable: tk.StringVar,
+        featured: bool,
+        padx: tuple[int, int],
+    ) -> tuple[ctk.CTkFrame, ctk.CTkLabel]:
+        result = ctk.CTkFrame(
+            parent,
+            corner_radius=10,
+            fg_color=ACCENT_SOFT if featured else CONTROL_BG,
+            border_width=0,
+        )
+        result.grid(row=0, column=column, sticky="ew", padx=padx)
+        result.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            result,
+            text=title,
+            font=self.label_font,
+            text_color=TEXT,
+            anchor="w",
+        ).grid(row=0, column=0, sticky="w", padx=(13, 8), pady=(9, 0))
+        formula_options: dict[str, object]
+        if isinstance(formula, tk.StringVar):
+            formula_options = {"textvariable": formula}
+        else:
+            formula_options = {"text": formula}
+        ctk.CTkLabel(
+            result,
+            font=self.caption_font,
+            text_color=MUTED,
+            anchor="w",
+            **formula_options,
+        ).grid(row=1, column=0, sticky="w", padx=(13, 8), pady=(0, 9))
+
+        value_label = ctk.CTkLabel(
+            result,
+            textvariable=variable,
+            font=self.result_font,
+            text_color=FAINT,
+            anchor="e",
+        )
+        value_label.grid(
+            row=0,
+            column=1,
+            rowspan=2,
+            sticky="e",
+            padx=(10, 13),
+        )
+        return result, value_label
+
+    def _build_input_card(self, parent: ctk.CTkFrame) -> None:
+        card = self._create_shadowed_panel(
+            parent,
+            row=1,
+            pady=(12, 2),
+        )
 
         card_header = ctk.CTkFrame(card, fg_color="transparent")
         card_header.grid(row=0, column=0, sticky="ew", padx=18, pady=(15, 10))
@@ -829,10 +1448,10 @@ class CalculatorApp(ctk.CTk):
             divisor_control,
             width=82,
             height=29,
-            corner_radius=8,
+            corner_radius=CONTROL_RADIUS,
             border_width=1,
             border_color=BORDER,
-            fg_color=SURFACE_ALT,
+            fg_color=CONTROL_BG,
             text_color=TEXT,
             placeholder_text=DEFAULT_DIVISOR,
             placeholder_text_color=FAINT,
@@ -867,6 +1486,30 @@ class CalculatorApp(ctk.CTk):
             hint="例：475",
             padx=(6, 0),
         )
+
+        results = ctk.CTkFrame(card, fg_color="transparent")
+        results.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 13))
+        results.grid_columnconfigure(0, weight=1)
+        results.grid_columnconfigure(1, weight=1)
+        self.total_card, self.total_value_label = self._add_inline_result(
+            results,
+            column=0,
+            title="总数",
+            formula="A + B",
+            variable=self.total_result,
+            featured=True,
+            padx=(0, 6),
+        )
+        self.divide_card, self.divide_value_label = self._add_inline_result(
+            results,
+            column=1,
+            title="单列结果",
+            formula=self.divide_formula,
+            variable=self.divide_result,
+            featured=False,
+            padx=(6, 0),
+        )
+        self._build_actions(card, row=3)
 
     def _add_input_field(
         self,
@@ -903,10 +1546,10 @@ class CalculatorApp(ctk.CTk):
         entry = ctk.CTkEntry(
             field,
             height=44,
-            corner_radius=10,
+            corner_radius=CONTROL_RADIUS,
             border_width=1,
             border_color=BORDER,
-            fg_color=SURFACE_ALT,
+            fg_color=CONTROL_BG,
             text_color=TEXT,
             placeholder_text=placeholder,
             placeholder_text_color=FAINT,
@@ -919,9 +1562,15 @@ class CalculatorApp(ctk.CTk):
         entry.grid(row=1, column=0, sticky="ew")
         return entry
 
-    def _build_actions(self, parent: ctk.CTkFrame) -> None:
+    def _build_actions(self, parent: ctk.CTkFrame, *, row: int) -> None:
         actions = ctk.CTkFrame(parent, fg_color="transparent")
-        actions.grid(row=1, column=0, sticky="ew", pady=(14, 17))
+        actions.grid(
+            row=row,
+            column=0,
+            sticky="ew",
+            padx=18,
+            pady=(0, 16),
+        )
         actions.grid_columnconfigure(0, weight=1)
         actions.grid_columnconfigure(1, weight=2)
 
@@ -929,11 +1578,10 @@ class CalculatorApp(ctk.CTk):
             actions,
             text="清空",
             height=43,
-            corner_radius=10,
-            border_width=1,
-            border_color=BORDER,
-            fg_color=SURFACE,
-            hover_color=SURFACE_ALT,
+            corner_radius=BUTTON_RADIUS,
+            border_width=0,
+            fg_color=CONTROL_BG,
+            hover_color=CONTROL_HOVER,
             text_color=TEXT,
             font=self.body_font,
             command=self.clear,
@@ -944,7 +1592,7 @@ class CalculatorApp(ctk.CTk):
             actions,
             text="计算结果",
             height=43,
-            corner_radius=10,
+            corner_radius=BUTTON_RADIUS,
             fg_color=ACCENT,
             hover_color=ACCENT_HOVER,
             text_color=ACCENT_TEXT,
@@ -954,15 +1602,11 @@ class CalculatorApp(ctk.CTk):
         self.calculate_button.grid(row=0, column=1, sticky="ew", padx=(5, 0))
 
     def _build_multiply_add_panel(self, parent: ctk.CTkFrame) -> None:
-        card = ctk.CTkFrame(
+        card = self._create_shadowed_panel(
             parent,
-            corner_radius=16,
-            fg_color=SURFACE,
-            border_width=1,
-            border_color=BORDER,
+            row=1,
+            pady=(12, 2),
         )
-        card.grid(row=0, column=0, sticky="ew")
-        card.grid_columnconfigure(0, weight=1)
 
         card_header = ctk.CTkFrame(card, fg_color="transparent")
         card_header.grid(row=0, column=0, sticky="ew", padx=18, pady=(14, 8))
@@ -978,10 +1622,9 @@ class CalculatorApp(ctk.CTk):
         coefficient_control = ctk.CTkFrame(
             card_header,
             height=36,
-            corner_radius=9,
-            fg_color=SURFACE_ALT,
-            border_width=1,
-            border_color=BORDER,
+            corner_radius=0,
+            fg_color="transparent",
+            border_width=0,
         )
         coefficient_control.grid(row=0, column=1, sticky="e")
         ctk.CTkLabel(
@@ -994,10 +1637,10 @@ class CalculatorApp(ctk.CTk):
             coefficient_control,
             width=88,
             height=30,
-            corner_radius=7,
+            corner_radius=CONTROL_RADIUS,
             border_width=1,
             border_color=BORDER,
-            fg_color=SURFACE,
+            fg_color=CONTROL_BG,
             text_color=TEXT,
             placeholder_text=DEFAULT_COEFFICIENT,
             placeholder_text_color=FAINT,
@@ -1012,8 +1655,8 @@ class CalculatorApp(ctk.CTk):
         formula_strip = ctk.CTkFrame(
             card,
             height=38,
-            corner_radius=9,
-            fg_color=SURFACE_ALT,
+            corner_radius=CONTROL_RADIUS,
+            fg_color=CONTROL_BG,
         )
         formula_strip.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 10))
         formula_strip.grid_propagate(False)
@@ -1047,19 +1690,46 @@ class CalculatorApp(ctk.CTk):
             padx=(6, 0),
         )
 
-        actions = ctk.CTkFrame(parent, fg_color="transparent")
-        actions.grid(row=1, column=0, sticky="ew", pady=(14, 17))
+        result_area = ctk.CTkFrame(card, fg_color="transparent")
+        result_area.grid(
+            row=3,
+            column=0,
+            sticky="ew",
+            padx=18,
+            pady=(0, 13),
+        )
+        result_area.grid_columnconfigure(0, weight=1)
+        (
+            self.multiply_add_result_card,
+            self.multiply_add_result_label,
+        ) = self._add_inline_result(
+            result_area,
+            column=0,
+            title="计算结果",
+            formula=self.multiply_add_formula,
+            variable=self.multiply_add_result,
+            featured=True,
+            padx=(0, 0),
+        )
+
+        actions = ctk.CTkFrame(card, fg_color="transparent")
+        actions.grid(
+            row=4,
+            column=0,
+            sticky="ew",
+            padx=18,
+            pady=(0, 16),
+        )
         actions.grid_columnconfigure(0, weight=1)
         actions.grid_columnconfigure(1, weight=2)
         self.multiply_add_clear_button = ctk.CTkButton(
             actions,
             text="清空",
             height=43,
-            corner_radius=10,
-            border_width=1,
-            border_color=BORDER,
-            fg_color=SURFACE,
-            hover_color=SURFACE_ALT,
+            corner_radius=BUTTON_RADIUS,
+            border_width=0,
+            fg_color=CONTROL_BG,
+            hover_color=CONTROL_HOVER,
             text_color=TEXT,
             font=self.body_font,
             command=self.clear_multiply_add,
@@ -1074,7 +1744,7 @@ class CalculatorApp(ctk.CTk):
             actions,
             text="计算等于",
             height=43,
-            corner_radius=10,
+            corner_radius=BUTTON_RADIUS,
             fg_color=ACCENT,
             hover_color=ACCENT_HOVER,
             text_color=ACCENT_TEXT,
@@ -1088,70 +1758,19 @@ class CalculatorApp(ctk.CTk):
             padx=(5, 0),
         )
 
-        result_header = ctk.CTkFrame(parent, fg_color="transparent")
-        result_header.grid(row=2, column=0, sticky="ew", pady=(0, 7))
-        result_header.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(
-            result_header,
-            text="计算结果",
-            font=self.section_font,
-            text_color=TEXT,
-            anchor="w",
-        ).grid(row=0, column=0, sticky="w")
-        ctk.CTkLabel(
-            result_header,
-            text="实时更新 · 最多 2 位",
-            font=self.caption_font,
-            text_color=FAINT,
-            anchor="e",
-        ).grid(row=0, column=1, sticky="e")
-
-        (
-            self.multiply_add_result_card,
-            self.multiply_add_result_label,
-        ) = self._add_result_card(
-            parent,
-            row=3,
-            title="等于",
-            formula=self.multiply_add_formula,
-            variable=self.multiply_add_result,
-            featured=True,
-        )
-
     def _build_basic_arithmetic_page(self, parent: ctk.CTkFrame) -> None:
-        intro = ctk.CTkFrame(parent, fg_color="transparent")
-        intro.grid(row=0, column=0, sticky="ew", pady=(1, 12))
-        intro.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(
-            intro,
-            text="固定值基础运算",
-            font=self.section_font,
-            text_color=TEXT,
-            anchor="w",
-        ).grid(row=0, column=0, sticky="w")
-        ctk.CTkLabel(
-            intro,
-            text="每次只选择一个运算符",
-            font=self.caption_font,
-            text_color=FAINT,
-            anchor="e",
-        ).grid(row=0, column=1, sticky="e")
-
-        card = ctk.CTkFrame(
+        self._build_history_panel(parent, "basic", row=0)
+        card = self._create_shadowed_panel(
             parent,
-            corner_radius=16,
-            fg_color=SURFACE,
-            border_width=1,
-            border_color=BORDER,
+            row=1,
+            pady=(12, 2),
         )
-        card.grid(row=1, column=0, sticky="ew")
-        card.grid_columnconfigure(0, weight=1)
 
         formula_strip = ctk.CTkFrame(
             card,
             height=42,
-            corner_radius=9,
-            fg_color=SURFACE_ALT,
+            corner_radius=CONTROL_RADIUS,
+            fg_color=CONTROL_BG,
         )
         formula_strip.grid(row=0, column=0, sticky="ew", padx=18, pady=(16, 12))
         formula_strip.grid_propagate(False)
@@ -1211,10 +1830,9 @@ class CalculatorApp(ctk.CTk):
 
         operation_selector = ctk.CTkFrame(
             card,
-            corner_radius=10,
-            fg_color=SURFACE_ALT,
-            border_width=1,
-            border_color=BORDER,
+            corner_radius=CONTROL_RADIUS,
+            fg_color=CONTROL_BG,
+            border_width=0,
         )
         operation_selector.grid(
             row=3,
@@ -1240,11 +1858,12 @@ class CalculatorApp(ctk.CTk):
                 text=label,
                 width=70,
                 height=38,
-                corner_radius=8,
-                border_width=1 if active else 0,
-                border_color=ACCENT_BORDER,
+                corner_radius=7,
+                border_width=0,
                 fg_color=ACCENT_SOFT if active else "transparent",
-                hover_color=ACCENT_BORDER if active else BORDER,
+                hover_color=(
+                    ACCENT_SOFT_HOVER if active else CONTROL_HOVER
+                ),
                 text_color=ACCENT if active else MUTED,
                 font=self.button_font,
                 command=lambda value=operation: self.select_basic_operation(value),
@@ -1258,19 +1877,43 @@ class CalculatorApp(ctk.CTk):
             )
             self.basic_operation_buttons[operation] = button
 
-        actions = ctk.CTkFrame(parent, fg_color="transparent")
-        actions.grid(row=2, column=0, sticky="ew", pady=(14, 17))
+        result_area = ctk.CTkFrame(card, fg_color="transparent")
+        result_area.grid(
+            row=4,
+            column=0,
+            sticky="ew",
+            padx=18,
+            pady=(0, 13),
+        )
+        result_area.grid_columnconfigure(0, weight=1)
+        self.basic_result_card, self.basic_result_label = self._add_inline_result(
+            result_area,
+            column=0,
+            title="计算结果",
+            formula=self.basic_formula,
+            variable=self.basic_result,
+            featured=True,
+            padx=(0, 0),
+        )
+
+        actions = ctk.CTkFrame(card, fg_color="transparent")
+        actions.grid(
+            row=5,
+            column=0,
+            sticky="ew",
+            padx=18,
+            pady=(0, 16),
+        )
         actions.grid_columnconfigure(0, weight=1)
         actions.grid_columnconfigure(1, weight=2)
         self.basic_clear_button = ctk.CTkButton(
             actions,
             text="清空",
             height=43,
-            corner_radius=10,
-            border_width=1,
-            border_color=BORDER,
-            fg_color=SURFACE,
-            hover_color=SURFACE_ALT,
+            corner_radius=BUTTON_RADIUS,
+            border_width=0,
+            fg_color=CONTROL_BG,
+            hover_color=CONTROL_HOVER,
             text_color=TEXT,
             font=self.body_font,
             command=self.clear_basic_arithmetic,
@@ -1285,7 +1928,7 @@ class CalculatorApp(ctk.CTk):
             actions,
             text="计算结果",
             height=43,
-            corner_radius=10,
+            corner_radius=BUTTON_RADIUS,
             fg_color=ACCENT,
             hover_color=ACCENT_HOVER,
             text_color=ACCENT_TEXT,
@@ -1297,36 +1940,6 @@ class CalculatorApp(ctk.CTk):
             column=1,
             sticky="ew",
             padx=(5, 0),
-        )
-
-        result_header = ctk.CTkFrame(parent, fg_color="transparent")
-        result_header.grid(row=3, column=0, sticky="ew", pady=(0, 7))
-        result_header.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(
-            result_header,
-            text="计算结果",
-            font=self.section_font,
-            text_color=TEXT,
-            anchor="w",
-        ).grid(row=0, column=0, sticky="w")
-        ctk.CTkLabel(
-            result_header,
-            text="实时更新 · 最多 2 位",
-            font=self.caption_font,
-            text_color=FAINT,
-            anchor="e",
-        ).grid(row=0, column=1, sticky="e")
-
-        (
-            self.basic_result_card,
-            self.basic_result_label,
-        ) = self._add_result_card(
-            parent,
-            row=4,
-            title="等于",
-            formula=self.basic_formula,
-            variable=self.basic_result,
-            featured=True,
         )
 
     def _build_counter_page(self, parent: ctk.CTkFrame) -> None:
@@ -1348,24 +1961,18 @@ class CalculatorApp(ctk.CTk):
             anchor="e",
         ).grid(row=0, column=1, sticky="e")
 
-        counter = ctk.CTkFrame(
+        counter = self._create_shadowed_panel(
             parent,
-            height=220,
-            corner_radius=16,
-            fg_color=SURFACE,
-            border_width=1,
-            border_color=ACCENT_BORDER,
+            row=1,
+            pady=(0, 2),
         )
-        counter.grid(row=1, column=0, sticky="ew")
-        counter.grid_columnconfigure(0, weight=1)
-        counter.grid_propagate(False)
 
         ctk.CTkLabel(
             counter,
             text="当前计数",
             font=self.caption_font,
             text_color=FAINT,
-        ).grid(row=0, column=0, pady=(22, 0))
+        ).grid(row=0, column=0, pady=(20, 0))
 
         self.counter_value_label = ctk.CTkLabel(
             counter,
@@ -1374,60 +1981,68 @@ class CalculatorApp(ctk.CTk):
             text_color=ACCENT,
             anchor="center",
         )
-        self.counter_value_label.grid(row=1, column=0, sticky="ew", pady=(3, 10))
-
-        counter_actions = ctk.CTkFrame(counter, fg_color="transparent")
-        counter_actions.grid(row=2, column=0, sticky="ew", padx=24, pady=(0, 22))
-        counter_actions.grid_columnconfigure(0, weight=1)
-        counter_actions.grid_columnconfigure(1, weight=2)
-
-        self.counter_reset_button = ctk.CTkButton(
-            counter_actions,
-            text="清零",
-            height=48,
-            corner_radius=10,
-            border_width=1,
-            border_color=BORDER,
-            fg_color=SURFACE_ALT,
-            hover_color=BORDER,
-            text_color=TEXT,
-            font=self.body_font,
-            command=self.reset_counter,
-        )
-        self.counter_reset_button.grid(
-            row=0,
+        self.counter_value_label.grid(
+            row=1,
             column=0,
             sticky="ew",
-            padx=(0, 6),
+            padx=22,
+            pady=(2, 20),
         )
+
+        counter_actions = ctk.CTkFrame(counter, fg_color="transparent")
+        counter_actions.grid(
+            row=2,
+            column=0,
+            sticky="ew",
+            padx=22,
+            pady=(0, 20),
+        )
+        counter_actions.grid_columnconfigure(0, weight=1)
 
         self.counter_increment_button = ctk.CTkButton(
             counter_actions,
-            text="计数 +1",
-            height=48,
-            corner_radius=10,
+            text="＋  加 1",
+            height=68,
+            corner_radius=12,
             fg_color=ACCENT,
             hover_color=ACCENT_HOVER,
             text_color=ACCENT_TEXT,
-            font=self.button_font,
+            font=ctk.CTkFont(self.font_family, 18, "bold"),
             command=self.increment_counter,
         )
         self.counter_increment_button.grid(
             row=0,
-            column=1,
+            column=0,
             sticky="ew",
-            padx=(6, 0),
+        )
+
+        self.counter_reset_button = ctk.CTkButton(
+            counter_actions,
+            text="清零",
+            height=40,
+            corner_radius=BUTTON_RADIUS,
+            border_width=0,
+            fg_color=CONTROL_BG,
+            hover_color=CONTROL_HOVER,
+            text_color=MUTED,
+            font=self.body_font,
+            command=self.reset_counter,
+        )
+        self.counter_reset_button.grid(
+            row=1,
+            column=0,
+            sticky="ew",
+            pady=(10, 0),
         )
 
         hotkey_card = ctk.CTkFrame(
             parent,
             height=76,
-            corner_radius=14,
+            corner_radius=PANEL_RADIUS,
             fg_color=SURFACE,
-            border_width=1,
-            border_color=BORDER,
+            border_width=0,
         )
-        hotkey_card.grid(row=2, column=0, sticky="ew", pady=(14, 0))
+        hotkey_card.grid(row=2, column=0, sticky="ew", pady=(12, 0))
         hotkey_card.grid_columnconfigure(0, weight=1)
         hotkey_card.grid_propagate(False)
 
@@ -1435,7 +2050,8 @@ class CalculatorApp(ctk.CTk):
             hotkey_card,
             fg_color="transparent",
         )
-        hotkey_description.grid(row=0, column=0, sticky="w", padx=(18, 8))
+        hotkey_description.grid(row=0, column=0, sticky="ew", padx=(18, 8))
+        hotkey_description.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             hotkey_description,
             text="计数快捷键",
@@ -1456,11 +2072,10 @@ class CalculatorApp(ctk.CTk):
             text=self._hotkey_button_text(),
             width=154,
             height=40,
-            corner_radius=9,
-            border_width=1,
-            border_color=BORDER,
-            fg_color=SURFACE_ALT,
-            hover_color=BORDER,
+            corner_radius=CONTROL_RADIUS,
+            border_width=0,
+            fg_color=CONTROL_BG,
+            hover_color=CONTROL_HOVER,
             font=self.caption_font,
             text_color=MUTED,
             command=self.start_hotkey_capture,
@@ -1472,147 +2087,12 @@ class CalculatorApp(ctk.CTk):
             padx=(8, 18),
         )
 
-    def _build_results(self, parent: ctk.CTkFrame) -> None:
-        section_header = ctk.CTkFrame(parent, fg_color="transparent")
-        section_header.grid(row=2, column=0, sticky="ew", pady=(0, 7))
-        section_header.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(
-            section_header,
-            text="计算结果",
-            font=self.section_font,
-            text_color=TEXT,
-            anchor="w",
-        ).grid(row=0, column=0, sticky="w")
-        ctk.CTkLabel(
-            section_header,
-            text="实时更新 · 最多 2 位",
-            font=self.caption_font,
-            text_color=FAINT,
-            anchor="e",
-        ).grid(row=0, column=1, sticky="e")
-
-        results = ctk.CTkFrame(parent, fg_color="transparent")
-        results.grid(row=3, column=0, sticky="ew")
-        results.grid_columnconfigure(0, weight=1)
-
-        self.total_card, self.total_value_label = self._add_result_card(
-            results,
-            row=0,
-            title="总数",
-            formula="A + B",
-            variable=self.total_result,
-            featured=True,
-        )
-        self.divide_card, self.divide_value_label = self._add_result_card(
-            results,
-            row=1,
-            title="单列结果",
-            formula=self.divide_formula,
-            variable=self.divide_result,
-            featured=False,
-        )
-
-    def _add_result_card(
-        self,
-        parent: ctk.CTkFrame,
-        row: int,
-        title: str,
-        formula: str | tk.StringVar,
-        variable: tk.StringVar,
-        featured: bool,
-    ) -> tuple[ctk.CTkFrame, ctk.CTkLabel]:
-        card = ctk.CTkFrame(
-            parent,
-            height=71,
-            corner_radius=14,
-            fg_color=SURFACE,
-            border_width=1,
-            border_color=ACCENT_BORDER if featured else BORDER,
-        )
-        card.grid(row=row, column=0, sticky="ew", pady=(0, 7 if row == 0 else 0))
-        card.grid_propagate(False)
-
-        if featured:
-            accent_rail = ctk.CTkFrame(
-                card,
-                width=4,
-                height=47,
-                corner_radius=2,
-                fg_color=ACCENT,
-            )
-            accent_rail.grid(
-                row=0,
-                column=0,
-                rowspan=2,
-                sticky="ns",
-                padx=(12, 0),
-                pady=12,
-            )
-            text_column = 1
-            value_column = 2
-            text_padx = (12, 0)
-        else:
-            text_column = 0
-            value_column = 1
-            text_padx = (16, 0)
-
-        card.grid_columnconfigure(text_column, weight=1)
-
-        ctk.CTkLabel(
-            card,
-            text=title,
-            font=self.label_font,
-            text_color=TEXT,
-            anchor="w",
-        ).grid(
-            row=0,
-            column=text_column,
-            sticky="sw",
-            padx=text_padx,
-            pady=(10, 0),
-        )
-        formula_options: dict[str, object]
-        if isinstance(formula, tk.StringVar):
-            formula_options = {"textvariable": formula}
-        else:
-            formula_options = {"text": formula}
-
-        ctk.CTkLabel(
-            card,
-            font=self.caption_font,
-            text_color=MUTED,
-            anchor="w",
-            **formula_options,
-        ).grid(
-            row=1,
-            column=text_column,
-            sticky="nw",
-            padx=text_padx,
-            pady=(0, 10),
-        )
-
-        value_label = ctk.CTkLabel(
-            card,
-            textvariable=variable,
-            font=self.result_font,
-            text_color=FAINT,
-            anchor="e",
-        )
-        value_label.grid(
-            row=0,
-            column=value_column,
-            rowspan=2,
-            sticky="e",
-            padx=(18, 16),
-        )
-        return card, value_label
-
     def _build_status(self, parent: ctk.CTkFrame) -> None:
         self.status_frame = ctk.CTkFrame(
             parent,
             height=34,
-            corner_radius=10,
-            fg_color=SURFACE_ALT,
+            corner_radius=CONTROL_RADIUS,
+            fg_color=CONTROL_BG,
         )
         self.status_frame.grid(row=2, column=0, sticky="ew", pady=(12, 0))
         self.status_frame.grid_columnconfigure(1, weight=1)
@@ -1708,7 +2188,7 @@ class CalculatorApp(ctk.CTk):
         )
         self.standard_mode_button.bind(
             "<Shift-Tab>",
-            lambda _event: self._focus_widget(self.counter_nav_button),
+            lambda _event: self._focus_widget(self.theme_button),
         )
         self.multiply_add_mode_button.bind(
             "<Tab>",
@@ -1737,11 +2217,16 @@ class CalculatorApp(ctk.CTk):
         )
         self.counter_nav_button.bind(
             "<Tab>",
-            self._focus_page_start_from_keyboard,
+            lambda _event: self._focus_widget(self.theme_button),
         )
         self.counter_nav_button.bind(
             "<Shift-Tab>",
             lambda _event: self._focus_widget(self.basic_nav_button),
+        )
+        self.theme_button.bind("<Tab>", self._focus_page_start_from_keyboard)
+        self.theme_button.bind(
+            "<Shift-Tab>",
+            lambda _event: self._focus_widget(self.counter_nav_button),
         )
 
         self.basic_fixed_entry.bind(
@@ -1750,7 +2235,7 @@ class CalculatorApp(ctk.CTk):
         )
         self.basic_fixed_entry.bind(
             "<Shift-Tab>",
-            lambda _event: self._focus_widget(self.counter_nav_button),
+            lambda _event: self._focus_widget(self.theme_button),
         )
         self.basic_value_entry.bind(
             "<Tab>",
@@ -1786,26 +2271,26 @@ class CalculatorApp(ctk.CTk):
                     lambda _event, target=previous_button: self._focus_widget(target),
                 )
 
-        self.counter_reset_button.bind(
+        self.counter_increment_button.bind(
             "<Tab>",
-            lambda _event: self._focus_widget(self.counter_increment_button),
-        )
-        self.counter_reset_button.bind(
-            "<Shift-Tab>",
-            lambda _event: self._focus_widget(self.counter_nav_button),
+            lambda _event: self._focus_widget(self.counter_reset_button),
         )
         self.counter_increment_button.bind(
+            "<Shift-Tab>",
+            lambda _event: self._focus_widget(self.theme_button),
+        )
+        self.counter_reset_button.bind(
             "<Tab>",
             lambda _event: self._focus_widget(self.hotkey_button),
         )
-        self.counter_increment_button.bind(
+        self.counter_reset_button.bind(
             "<Shift-Tab>",
-            lambda _event: self._focus_widget(self.counter_reset_button),
+            lambda _event: self._focus_widget(self.counter_increment_button),
         )
         self.hotkey_button.bind("<Tab>", self._focus_navigation_from_keyboard)
         self.hotkey_button.bind(
             "<Shift-Tab>",
-            lambda _event: self._focus_widget(self.counter_increment_button),
+            lambda _event: self._focus_widget(self.counter_reset_button),
         )
 
         self.a_entry.focus_set()
@@ -1830,14 +2315,15 @@ class CalculatorApp(ctk.CTk):
 
     def _style_calculation_mode_buttons(self) -> None:
         active_options = {
-            "border_width": 1,
-            "border_color": ACCENT_BORDER,
+            "border_width": 0,
             "fg_color": ACCENT_SOFT,
+            "hover_color": ACCENT_SOFT_HOVER,
             "text_color": ACCENT,
         }
         inactive_options = {
             "border_width": 0,
             "fg_color": "transparent",
+            "hover_color": CONTROL_HOVER,
             "text_color": MUTED,
         }
         standard_options = (
@@ -1855,16 +2341,15 @@ class CalculatorApp(ctk.CTk):
 
     def _style_page_navigation(self) -> None:
         active_options = {
-            "border_width": 1,
-            "border_color": ACCENT_BORDER,
+            "border_width": 0,
             "fg_color": ACCENT_SOFT,
-            "hover_color": ACCENT_BORDER,
+            "hover_color": ACCENT_SOFT_HOVER,
             "text_color": ACCENT,
         }
         inactive_options = {
             "border_width": 0,
             "fg_color": "transparent",
-            "hover_color": BORDER,
+            "hover_color": CONTROL_HOVER,
             "text_color": MUTED,
         }
         page_buttons = {
@@ -1877,11 +2362,36 @@ class CalculatorApp(ctk.CTk):
                 **(active_options if page == self._current_page else inactive_options)
             )
 
+    def _theme_button_text(self) -> str:
+        return "☀" if self.appearance_mode == "dark" else "☾"
+
+    def toggle_appearance_mode(self) -> None:
+        next_mode = "dark" if self.appearance_mode == "light" else "light"
+        self.appearance_mode = next_mode
+        ctk.set_appearance_mode(next_mode)
+        self.theme_button.configure(text=self._theme_button_text())
+        self.update_idletasks()
+        self._apply_windows_titlebar()
+
+        mode_name = "深色" if next_mode == "dark" else "浅色"
+        try:
+            save_appearance_mode(next_mode)
+        except OSError:
+            self._set_status(
+                f"已切换为{mode_name}模式，但无法保存外观设置。",
+                tone="error",
+            )
+        else:
+            self._set_status(
+                f"已切换为{mode_name}模式，下次启动会自动保持。",
+                tone="success",
+            )
+
     def show_calculator_page(self) -> None:
         if self._capturing_hotkey:
             self.cancel_hotkey_capture()
         self._current_page = "calculator"
-        self.calculator_page.tkraise()
+        self.calculator_page_container.tkraise()
         if self._current_calculation_mode == "multiply_add":
             self.multiply_add_panel.tkraise()
             self.page_subtitle.set("自定义系数乘加")
@@ -1897,7 +2407,7 @@ class CalculatorApp(ctk.CTk):
         if self._capturing_hotkey:
             self.cancel_hotkey_capture()
         self._current_page = "basic"
-        self.basic_page.tkraise()
+        self.basic_page_container.tkraise()
         self.page_subtitle.set("固定值基础运算")
         self._style_page_navigation()
         self.shortcut_text.set(self._shortcut_summary())
@@ -1906,7 +2416,7 @@ class CalculatorApp(ctk.CTk):
 
     def show_counter_page(self) -> None:
         self._current_page = "counter"
-        self.counter_page.tkraise()
+        self.counter_page_container.tkraise()
         self.page_subtitle.set("独立快捷计数")
         self._style_page_navigation()
         self.shortcut_text.set(self._shortcut_summary())
@@ -1944,6 +2454,9 @@ class CalculatorApp(ctk.CTk):
                 return "break"
             if self._focus_is_within(self.counter_nav_button):
                 self.show_counter_page()
+                return "break"
+            if self._focus_is_within(self.theme_button):
+                self.toggle_appearance_mode()
                 return "break"
 
         if self._current_page == "calculator":
@@ -1990,7 +2503,7 @@ class CalculatorApp(ctk.CTk):
             return "break"
 
         if (
-            hotkey_matches_event(
+            counter_shortcut_matches(
                 self.counter_hotkey,
                 self.counter_hotkey_code,
                 keysym,
@@ -2047,13 +2560,15 @@ class CalculatorApp(ctk.CTk):
             self.counter_hotkey_code,
         )
         if self._current_page == "counter":
-            return f"{display} +1   ·   Esc 返回计算器"
+            shortcut = "Space" if display == "Space" else f"Space / {display}"
+            return f"{shortcut} +1   ·   Esc 返回计算器"
         return "Enter 计算   ·   Esc 清空"
 
     def start_hotkey_capture(self) -> None:
         self._capturing_hotkey = True
         self.hotkey_button.configure(
             text="请按一个键（Esc 取消）",
+            border_width=1,
             border_color=ACCENT_BORDER,
             fg_color=ACCENT_SOFT,
             text_color=ACCENT,
@@ -2102,8 +2617,9 @@ class CalculatorApp(ctk.CTk):
     def _restore_hotkey_button(self) -> None:
         self.hotkey_button.configure(
             text=self._hotkey_button_text(),
+            border_width=0,
             border_color=BORDER,
-            fg_color=SURFACE_ALT,
+            fg_color=CONTROL_BG,
             text_color=FAINT,
         )
 
@@ -2155,7 +2671,7 @@ class CalculatorApp(ctk.CTk):
             return self._focus_widget(self.standard_mode_button)
         if self._current_page == "basic":
             return self._focus_widget(self.basic_fixed_entry)
-        return self._focus_widget(self.counter_reset_button)
+        return self._focus_widget(self.counter_increment_button)
 
     def _focus_page_end_from_keyboard(self, _event: tk.Event) -> str:
         if self._current_page == "calculator":
@@ -2184,7 +2700,7 @@ class CalculatorApp(ctk.CTk):
     def _focus_entry(self, entry: ctk.CTkEntry) -> None:
         self._focused_entry = entry
         if entry not in self._invalid_entries:
-            entry.configure(border_color=ACCENT, border_width=2)
+            entry.configure(border_color=ACCENT, border_width=1)
 
     def _blur_entry(self, entry: ctk.CTkEntry) -> None:
         if self._focused_entry is entry:
@@ -2205,7 +2721,7 @@ class CalculatorApp(ctk.CTk):
             self.basic_value_entry,
         ):
             if entry is self._focused_entry:
-                entry.configure(border_color=ACCENT, border_width=2)
+                entry.configure(border_color=ACCENT, border_width=1)
             else:
                 entry.configure(border_color=BORDER, border_width=1)
 
@@ -2326,16 +2842,15 @@ class CalculatorApp(ctk.CTk):
 
     def _style_basic_operation_buttons(self) -> None:
         active_options = {
-            "border_width": 1,
-            "border_color": ACCENT_BORDER,
+            "border_width": 0,
             "fg_color": ACCENT_SOFT,
-            "hover_color": ACCENT_BORDER,
+            "hover_color": ACCENT_SOFT_HOVER,
             "text_color": ACCENT,
         }
         inactive_options = {
             "border_width": 0,
             "fg_color": "transparent",
-            "hover_color": BORDER,
+            "hover_color": CONTROL_HOVER,
             "text_color": MUTED,
         }
         for operation, button in self.basic_operation_buttons.items():
@@ -2417,10 +2932,22 @@ class CalculatorApp(ctk.CTk):
         self.divide_result.set(divided)
         self._style_result_label(self.total_value_label, total, ACCENT)
         self._style_result_label(self.divide_value_label, divided, TEXT)
+        a_text = self.a_value.get().strip()
+        b_text = self.b_value.get().strip()
         divisor_text = self.divisor_value.get().strip()
+        history_saved = self._record_history(
+            "standard",
+            f"A {a_text} + B {b_text}",
+            f"总数 {total}",
+            f"B {b_text} ÷ {divisor_text} = {divided}",
+        )
         self._set_status(
-            f"计算完成，已使用除数 {divisor_text}，结果保留 2 位小数。",
-            tone="success",
+            (
+                f"计算完成，已使用除数 {divisor_text}，并写入历史。"
+                if history_saved
+                else "计算完成，但历史记录暂时无法保存。"
+            ),
+            tone="success" if history_saved else "error",
         )
 
     def calculate_multiply_add(self) -> None:
@@ -2450,9 +2977,20 @@ class CalculatorApp(ctk.CTk):
         self.multiply_add_result.set(result)
         self._style_result_label(self.multiply_add_result_label, result, ACCENT)
         coefficient_text = self.coefficient_value.get().strip()
+        multiplier_text = self.multiply_value.get().strip()
+        addend_text = self.addend_value.get().strip()
+        history_saved = self._record_history(
+            "multiply_add",
+            f"{coefficient_text} × {multiplier_text} + {addend_text}",
+            f"结果 {result}",
+        )
         self._set_status(
-            f"乘加计算完成：已使用系数 {coefficient_text}。",
-            tone="success",
+            (
+                f"乘加计算完成，已使用系数 {coefficient_text} 并写入历史。"
+                if history_saved
+                else "乘加计算完成，但历史记录暂时无法保存。"
+            ),
+            tone="success" if history_saved else "error",
         )
 
     def calculate_basic_arithmetic(self) -> None:
@@ -2483,10 +3021,19 @@ class CalculatorApp(ctk.CTk):
         self._style_result_label(self.basic_result_label, result, ACCENT)
         fixed_value = self.basic_fixed_value.get().strip()
         operation_value = self.basic_operation_value.get().strip()
+        history_saved = self._record_history(
+            "basic",
+            f"{fixed_value} {self.basic_operation} {operation_value}",
+            f"结果 {result}",
+        )
         self._set_status(
-            f"计算完成：{fixed_value} {self.basic_operation} "
-            f"{operation_value} = {result}。",
-            tone="success",
+            (
+                f"计算完成：{fixed_value} {self.basic_operation} "
+                f"{operation_value} = {result}，已写入历史。"
+                if history_saved
+                else "计算完成，但历史记录暂时无法保存。"
+            ),
+            tone="success" if history_saved else "error",
         )
 
     def _entry_for_field(self, field: str) -> ctk.CTkEntry:
@@ -2505,7 +3052,7 @@ class CalculatorApp(ctk.CTk):
         self,
         label: ctk.CTkLabel,
         value: str,
-        color: str,
+        color: ColorValue,
     ) -> None:
         if len(value) <= 12:
             font = self.result_font
@@ -2587,13 +3134,15 @@ class CalculatorApp(ctk.CTk):
         self.update_idletasks()
         screen_width = self.winfo_screenwidth()
         screen_height = self.winfo_screenheight()
-        x = max((screen_width - WINDOW_WIDTH) // 2, 0)
-        y = max((screen_height - WINDOW_HEIGHT) // 2, 0)
-        self.geometry(f"{WINDOW_WIDTH}x{WINDOW_HEIGHT}+{x}+{y}")
+        rendered_width = self.winfo_width()
+        rendered_height = self.winfo_height()
+        x = max((screen_width - rendered_width) // 2, 0)
+        y = max((screen_height - rendered_height) // 2, 0)
+        self.geometry(f"+{x}+{y}")
 
 
 def main() -> None:
-    ctk.set_appearance_mode("dark")
+    enable_windows_dpi_awareness()
     app = CalculatorApp()
     app.mainloop()
 
