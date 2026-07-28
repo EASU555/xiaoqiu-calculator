@@ -760,7 +760,7 @@ struct CalculatorView: View {
             useWideLayout: useWideLayout
         )
 
-        VStack(spacing: useWideLayout ? 12 : 10) {
+        return VStack(spacing: useWideLayout ? 12 : 10) {
             HStack(spacing: 8) {
                 Text("数字键盘")
                     .font(.headline)
