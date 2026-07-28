@@ -28,7 +28,7 @@ final class CalculatorEngineTests: XCTestCase {
                 availableWidth: 960,
                 useWideLayout: true
             ),
-            104,
+            52,
             accuracy: 0.001
         )
         XCTAssertEqual(
@@ -37,7 +37,7 @@ final class CalculatorEngineTests: XCTestCase {
                 availableWidth: 960,
                 useWideLayout: true
             ),
-            104,
+            84,
             accuracy: 0.001
         )
         XCTAssertEqual(
@@ -46,9 +46,75 @@ final class CalculatorEngineTests: XCTestCase {
                 availableWidth: 1_300,
                 useWideLayout: true
             ),
-            104,
+            52,
             accuracy: 0.001
         )
+    }
+
+    func testKeypadUsesRemainingPageHeightInsteadOfWholeScreenHeight() {
+        XCTAssertEqual(
+            CalculatorLayoutMetrics.keypadKeyHeight(
+                availableHeight: 960,
+                availableWidth: 960,
+                useWideLayout: true
+            ),
+            72.5,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            CalculatorLayoutMetrics.keypadKeyHeight(
+                availableHeight: 960,
+                availableWidth: 960,
+                useWideLayout: true,
+                stackedReservedHeight: CalculatorLayoutMetrics
+                    .basicStackedReservedHeight
+            ),
+            84,
+            accuracy: 0.001
+        )
+    }
+
+    func testSideBySideKeypadUsesLandscapeHeightAndWidth() {
+        XCTAssertEqual(
+            CalculatorLayoutMetrics.keypadKeyHeight(
+                availableHeight: 720,
+                availableWidth: 560,
+                useWideLayout: true,
+                isSideBySide: true
+            ),
+            76.26,
+            accuracy: 0.001
+        )
+        XCTAssertTrue(
+            CalculatorLayoutMetrics.usesSideBySidePageLayout(
+                availableHeight: 720,
+                availableWidth: 1_300,
+                useWideLayout: true
+            )
+        )
+        XCTAssertFalse(
+            CalculatorLayoutMetrics.usesSideBySidePageLayout(
+                availableHeight: 1_100,
+                availableWidth: 960,
+                useWideLayout: true
+            )
+        )
+    }
+
+    func testSmallIPadPortraitKeypadFitsWithinAvailableHeight() {
+        let availableHeight: CGFloat = 878
+        let keyHeight = CalculatorLayoutMetrics.keypadKeyHeight(
+            availableHeight: availableHeight,
+            availableWidth: 746,
+            useWideLayout: true
+        )
+
+        XCTAssertLessThanOrEqual(
+            CalculatorLayoutMetrics.calculatorStackedReservedHeight
+                + keyHeight * 4,
+            availableHeight
+        )
+        XCTAssertGreaterThanOrEqual(keyHeight, 52)
     }
 
     func testKeypadGridStaysProportionalAcrossPhoneAndTabletWidths() {

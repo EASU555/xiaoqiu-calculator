@@ -124,22 +124,32 @@ struct CalculatorView: View {
                 0,
                 geometry.size.height - verticalPadding * 2
             )
+            let pageContent = content(
+                useWideLayout,
+                minHeight,
+                contentWidth
+            )
+            .frame(maxWidth: pageMaxWidth)
+            .frame(
+                minHeight: minHeight,
+                alignment: .top
+            )
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, verticalPadding)
+            .frame(maxWidth: .infinity)
 
             ZStack {
                 CalculatorBackdrop(
                     reduceTransparency: reduceTransparency
                 )
 
-                ScrollView {
-                    content(useWideLayout, minHeight, contentWidth)
-                        .frame(maxWidth: pageMaxWidth)
-                        .frame(
-                            minHeight: minHeight,
-                            alignment: .top
-                        )
-                        .padding(.horizontal, horizontalPadding)
-                        .padding(.vertical, verticalPadding)
-                        .frame(maxWidth: .infinity)
+                ViewThatFits(in: .vertical) {
+                    pageContent
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    ScrollView {
+                        pageContent
+                    }
                 }
             }
         }
@@ -173,30 +183,67 @@ struct CalculatorView: View {
         minHeight: CGFloat,
         contentWidth: CGFloat
     ) -> some View {
-        VStack(spacing: useWideLayout ? 20 : 16) {
-            modePicker
-                .frame(maxWidth: useWideLayout ? 460 : .infinity)
-
-            historyPanel(useWideLayout: useWideLayout)
-
-            if model.mode == .standard {
-                standardWorkspace(useWideLayout: useWideLayout)
-            } else {
-                multiplyAddWorkspace(useWideLayout: useWideLayout)
-            }
-
-            inlineStatus
-            numericKeypad(
-                useWideLayout: useWideLayout,
+        let useSideBySidePageLayout = CalculatorLayoutMetrics
+            .usesSideBySidePageLayout(
                 availableHeight: minHeight,
-                availableWidth: contentWidth
+                availableWidth: contentWidth,
+                useWideLayout: useWideLayout
             )
+        let sideKeypadWidth = min(560, contentWidth * 0.42)
+
+        return Group {
+            if useSideBySidePageLayout {
+                HStack(alignment: .top, spacing: 20) {
+                    VStack(spacing: 20) {
+                        calculatorControls(useWideLayout: useWideLayout)
+                    }
+                    .frame(maxWidth: .infinity)
+
+                    numericKeypad(
+                        useWideLayout: useWideLayout,
+                        availableHeight: minHeight,
+                        availableWidth: sideKeypadWidth,
+                        stackedReservedHeight: CalculatorLayoutMetrics
+                            .calculatorStackedReservedHeight,
+                        isSideBySide: true
+                    )
+                    .frame(width: sideKeypadWidth)
+                }
+            } else {
+                VStack(spacing: useWideLayout ? 20 : 16) {
+                    calculatorControls(useWideLayout: useWideLayout)
+
+                    numericKeypad(
+                        useWideLayout: useWideLayout,
+                        availableHeight: minHeight,
+                        availableWidth: contentWidth,
+                        stackedReservedHeight: CalculatorLayoutMetrics
+                            .calculatorStackedReservedHeight
+                    )
+                }
+            }
         }
         .frame(
             maxWidth: .infinity,
             minHeight: minHeight,
             alignment: .top
         )
+    }
+
+    @ViewBuilder
+    private func calculatorControls(useWideLayout: Bool) -> some View {
+        modePicker
+            .frame(maxWidth: useWideLayout ? 460 : .infinity)
+
+        historyPanel(useWideLayout: useWideLayout)
+
+        if model.mode == .standard {
+            standardWorkspace(useWideLayout: useWideLayout)
+        } else {
+            multiplyAddWorkspace(useWideLayout: useWideLayout)
+        }
+
+        inlineStatus
     }
 
     private var modePicker: some View {
@@ -347,21 +394,58 @@ struct CalculatorView: View {
         minHeight: CGFloat,
         contentWidth: CGFloat
     ) -> some View {
-        VStack(spacing: useWideLayout ? 20 : 16) {
-            historyPanel(useWideLayout: useWideLayout)
-            basicWorkspace(useWideLayout: useWideLayout)
-            inlineStatus
-            numericKeypad(
-                useWideLayout: useWideLayout,
+        let useSideBySidePageLayout = CalculatorLayoutMetrics
+            .usesSideBySidePageLayout(
                 availableHeight: minHeight,
-                availableWidth: contentWidth
+                availableWidth: contentWidth,
+                useWideLayout: useWideLayout
             )
+        let sideKeypadWidth = min(560, contentWidth * 0.42)
+
+        return Group {
+            if useSideBySidePageLayout {
+                HStack(alignment: .top, spacing: 20) {
+                    VStack(spacing: 20) {
+                        basicControls(useWideLayout: useWideLayout)
+                    }
+                    .frame(maxWidth: .infinity)
+
+                    numericKeypad(
+                        useWideLayout: useWideLayout,
+                        availableHeight: minHeight,
+                        availableWidth: sideKeypadWidth,
+                        stackedReservedHeight: CalculatorLayoutMetrics
+                            .basicStackedReservedHeight,
+                        isSideBySide: true
+                    )
+                    .frame(width: sideKeypadWidth)
+                }
+            } else {
+                VStack(spacing: useWideLayout ? 20 : 16) {
+                    basicControls(useWideLayout: useWideLayout)
+
+                    numericKeypad(
+                        useWideLayout: useWideLayout,
+                        availableHeight: minHeight,
+                        availableWidth: contentWidth,
+                        stackedReservedHeight: CalculatorLayoutMetrics
+                            .basicStackedReservedHeight
+                    )
+                }
+            }
         }
         .frame(
             maxWidth: .infinity,
             minHeight: minHeight,
             alignment: .top
         )
+    }
+
+    @ViewBuilder
+    private func basicControls(useWideLayout: Bool) -> some View {
+        historyPanel(useWideLayout: useWideLayout)
+        basicWorkspace(useWideLayout: useWideLayout)
+        inlineStatus
     }
 
     @ViewBuilder
@@ -764,7 +848,9 @@ struct CalculatorView: View {
     private func numericKeypad(
         useWideLayout: Bool,
         availableHeight: CGFloat,
-        availableWidth: CGFloat
+        availableWidth: CGFloat,
+        stackedReservedHeight: CGFloat,
+        isSideBySide: Bool = false
     ) -> some View {
         let keySpacing = CalculatorLayoutMetrics.keypadSpacing(
             useWideLayout: useWideLayout
@@ -776,7 +862,9 @@ struct CalculatorView: View {
         let keyHeight = CalculatorLayoutMetrics.keypadKeyHeight(
             availableHeight: availableHeight,
             availableWidth: availableWidth,
-            useWideLayout: useWideLayout
+            useWideLayout: useWideLayout,
+            stackedReservedHeight: stackedReservedHeight,
+            isSideBySide: isSideBySide
         )
         let columns = Array(
             repeating: GridItem(.flexible(), spacing: keySpacing),
@@ -1113,6 +1201,17 @@ struct CalculatorView: View {
 }
 
 enum CalculatorLayoutMetrics {
+    static let calculatorStackedReservedHeight: CGFloat = 670
+    static let basicStackedReservedHeight: CGFloat = 595
+
+    static func usesSideBySidePageLayout(
+        availableHeight: CGFloat,
+        availableWidth: CGFloat,
+        useWideLayout: Bool
+    ) -> Bool {
+        useWideLayout && availableWidth > availableHeight * 1.15
+    }
+
     static func keypadSpacing(useWideLayout: Bool) -> CGFloat {
         useWideLayout ? 12 : 8
     }
@@ -1130,7 +1229,9 @@ enum CalculatorLayoutMetrics {
     static func keypadKeyHeight(
         availableHeight: CGFloat,
         availableWidth: CGFloat,
-        useWideLayout: Bool
+        useWideLayout: Bool,
+        stackedReservedHeight: CGFloat = calculatorStackedReservedHeight,
+        isSideBySide: Bool = false
     ) -> CGFloat {
         let spacing = keypadSpacing(useWideLayout: useWideLayout)
         let gridWidth = keypadGridWidth(
@@ -1138,14 +1239,20 @@ enum CalculatorLayoutMetrics {
             useWideLayout: useWideLayout
         )
         let keyWidth = max(0, (gridWidth - spacing * 3) / 4)
-        let minimum: CGFloat = useWideLayout ? 72 : 52
-        let maximum: CGFloat = useWideLayout ? 104 : 60
-        let heightRatio: CGFloat = useWideLayout ? 0.085 : 0.07
+        let minimum: CGFloat = 52
+        let maximum: CGFloat = useWideLayout ? 84 : 60
         let keyAspectRatio: CGFloat = useWideLayout ? 0.62 : 0.74
-        let proposedHeight = max(
-            availableHeight * heightRatio,
-            keyWidth * keyAspectRatio
+        let heightReserved = isSideBySide
+            ? 108
+            : stackedReservedHeight
+        let heightBudget = max(
+            minimum,
+            (availableHeight - heightReserved) / 4
         )
+        let widthBudget = keyWidth * keyAspectRatio
+        let proposedHeight = useWideLayout
+            ? min(heightBudget, widthBudget)
+            : max(availableHeight * 0.07, widthBudget)
 
         return min(maximum, max(minimum, proposedHeight))
     }
