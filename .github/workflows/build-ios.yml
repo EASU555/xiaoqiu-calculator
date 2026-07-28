@@ -1,0 +1,112 @@
+name: Build iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - agent/ios-universal-app
+    paths:
+      - "ios/**"
+      - ".github/workflows/build-ios.yml"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test and package
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - name: Show build environment
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks
+
+      - name: Select an available iPhone simulator
+        id: simulator
+        run: |
+          simulator_id="$(xcrun simctl list devices available -j | python3 -c '
+          import json
+          import sys
+
+          data = json.load(sys.stdin)
+          for runtime, devices in reversed(list(data["devices"].items())):
+              if "iOS" not in runtime:
+                  continue
+              for device in devices:
+                  if device.get("isAvailable") and device["name"].startswith("iPhone"):
+                      print(device["udid"])
+                      raise SystemExit
+          raise SystemExit("No available iPhone simulator found")
+          ')"
+          echo "id=$simulator_id" >> "$GITHUB_OUTPUT"
+
+      - name: Run iOS unit tests
+        run: |
+          xcodebuild test \
+            -project ios/XiaoqiuCalculator.xcodeproj \
+            -scheme XiaoqiuCalculator \
+            -configuration Debug \
+            -destination "platform=iOS Simulator,id=${{ steps.simulator.outputs.id }}" \
+            -derivedDataPath build/Tests \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Build unsigned device app
+        run: |
+          xcodebuild build \
+            -project ios/XiaoqiuCalculator.xcodeproj \
+            -scheme XiaoqiuCalculator \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build/Device \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: Package unsigned IPA
+        run: |
+          app_path="build/Device/Build/Products/Release-iphoneos/XiaoqiuCalculator.app"
+          test -d "$app_path"
+          test -x "$app_path/XiaoqiuCalculator"
+          mkdir -p build/Package/Payload
+          ditto "$app_path" build/Package/Payload/XiaoqiuCalculator.app
+          (
+            cd build/Package
+            zip -qry "../XiaoqiuCalculator-unsigned.ipa" Payload
+          )
+          shasum -a 256 build/XiaoqiuCalculator-unsigned.ipa \
+            > build/XiaoqiuCalculator-unsigned.ipa.sha256
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: XiaoqiuCalculator-unsigned
+          path: |
+            build/XiaoqiuCalculator-unsigned.ipa
+            build/XiaoqiuCalculator-unsigned.ipa.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Create downloadable prerelease
+        if: github.ref == 'refs/heads/agent/ios-universal-app'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="ios-build-${GITHUB_RUN_NUMBER}"
+          gh release create "$tag" \
+            build/XiaoqiuCalculator-unsigned.ipa \
+            build/XiaoqiuCalculator-unsigned.ipa.sha256 \
+            --target "$GITHUB_SHA" \
+            --title "小秋计算器 iOS 构建 ${GITHUB_RUN_NUMBER}" \
+            --notes "iPhone / iPad 通用未签名 IPA。安装前请使用自己的开发者证书重新签名。" \
+            --prerelease
