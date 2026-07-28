@@ -3,6 +3,41 @@ import XCTest
 @testable import XiaoqiuCalculator
 
 final class CalculatorEngineTests: XCTestCase {
+    func testKeypadHeightAdaptsToPhoneAndTabletViewports() {
+        XCTAssertEqual(
+            CalculatorLayoutMetrics.keypadKeyHeight(
+                availableHeight: 650,
+                useWideLayout: false
+            ),
+            48,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            CalculatorLayoutMetrics.keypadKeyHeight(
+                availableHeight: 800,
+                useWideLayout: false
+            ),
+            52,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            CalculatorLayoutMetrics.keypadKeyHeight(
+                availableHeight: 800,
+                useWideLayout: true
+            ),
+            80,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            CalculatorLayoutMetrics.keypadKeyHeight(
+                availableHeight: 1_200,
+                useWideLayout: true
+            ),
+            112,
+            accuracy: 0.001
+        )
+    }
+
     func testDefaultDivisor() throws {
         XCTAssertEqual(
             try CalculatorEngine.calculate(aText: "592", bText: "3325"),

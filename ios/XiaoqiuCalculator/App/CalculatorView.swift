@@ -179,7 +179,10 @@ struct CalculatorView: View {
             }
 
             inlineStatus
-            numericKeypad(useWideLayout: useWideLayout)
+            numericKeypad(
+                useWideLayout: useWideLayout,
+                availableHeight: minHeight
+            )
         }
         .frame(
             maxWidth: .infinity,
@@ -339,7 +342,10 @@ struct CalculatorView: View {
             historyPanel(useWideLayout: useWideLayout)
             basicWorkspace(useWideLayout: useWideLayout)
             inlineStatus
-            numericKeypad(useWideLayout: useWideLayout)
+            numericKeypad(
+                useWideLayout: useWideLayout,
+                availableHeight: minHeight
+            )
         }
         .frame(
             maxWidth: .infinity,
@@ -745,7 +751,15 @@ struct CalculatorView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func numericKeypad(useWideLayout: Bool) -> some View {
+    private func numericKeypad(
+        useWideLayout: Bool,
+        availableHeight: CGFloat
+    ) -> some View {
+        let keyHeight = CalculatorLayoutMetrics.keypadKeyHeight(
+            availableHeight: availableHeight,
+            useWideLayout: useWideLayout
+        )
+
         VStack(spacing: useWideLayout ? 12 : 10) {
             HStack(spacing: 8) {
                 Text("数字键盘")
@@ -787,7 +801,7 @@ struct CalculatorView: View {
                                     : .title3.weight(.semibold)
                             )
                             .frame(maxWidth: .infinity)
-                            .frame(height: useWideLayout ? 52 : 48)
+                            .frame(height: keyHeight)
                         }
                         .buttonStyle(
                             CalculatorKeyButtonStyle(
@@ -1021,6 +1035,20 @@ struct CalculatorView: View {
         case .error:
             return .errorSoft
         }
+    }
+}
+
+enum CalculatorLayoutMetrics {
+    static func keypadKeyHeight(
+        availableHeight: CGFloat,
+        useWideLayout: Bool
+    ) -> CGFloat {
+        let minimum: CGFloat = useWideLayout ? 64 : 48
+        let maximum: CGFloat = useWideLayout ? 112 : 56
+        let heightRatio: CGFloat = useWideLayout ? 0.10 : 0.065
+        let proposedHeight = availableHeight * heightRatio
+
+        return min(maximum, max(minimum, proposedHeight))
     }
 }
 
