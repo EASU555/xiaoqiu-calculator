@@ -3,77 +3,87 @@ import UIKit
 
 struct CalculatorView: View {
     @StateObject private var model = CalculatorViewModel()
+    @State private var showHistoryClearConfirmation = false
     @FocusState private var focusedField: CalculatorField?
     @Environment(\.accessibilityReduceTransparency)
     private var reduceTransparency
 
-    private let pageMaxWidth: CGFloat = 1_180
+    private let pageMaxWidth: CGFloat = 1_100
 
     var body: some View {
-        GeometryReader { geometry in
-            let useWideLayout = geometry.size.width >= 760
-            let horizontalPadding: CGFloat = useWideLayout ? 32 : 18
-            let verticalPadding: CGFloat = useWideLayout ? 28 : 18
-            let pageMinHeight: CGFloat = useWideLayout
-                ? max(410, geometry.size.height - 310)
-                : 0
-
-            ZStack {
-                LiquidGlassBackdrop(
-                    reduceTransparency: reduceTransparency
-                )
-
-                ScrollView {
-                    VStack(spacing: useWideLayout ? 20 : 16) {
-                        header
-                        pagePicker
-                        pageContent(
-                            useWideLayout: useWideLayout,
-                            minHeight: pageMinHeight
-                        )
-                        statusBar
-                        keyboardHint
-                    }
-                    .frame(maxWidth: pageMaxWidth)
-                    .frame(
-                        minHeight: max(
-                            0,
-                            geometry.size.height - verticalPadding * 2
-                        ),
-                        alignment: .top
+        TabView(selection: $model.page) {
+            NavigationStack {
+                pageCanvas { useWideLayout, minHeight in
+                    calculatorPage(
+                        useWideLayout: useWideLayout,
+                        minHeight: minHeight
                     )
-                    .padding(.horizontal, horizontalPadding)
-                    .padding(.vertical, verticalPadding)
-                    .frame(maxWidth: .infinity)
                 }
-                .scrollDismissesKeyboard(.interactively)
+                .navigationTitle("计算器")
+                .navigationBarTitleDisplayMode(.large)
+                .toolbar {
+                    navigationToolbar(for: .calculator)
+                }
             }
+            .tabItem {
+                Label("计算器", systemImage: "function")
+            }
+            .tag(AppPage.calculator)
+
+            NavigationStack {
+                pageCanvas { useWideLayout, minHeight in
+                    basicPage(
+                        useWideLayout: useWideLayout,
+                        minHeight: minHeight
+                    )
+                }
+                .navigationTitle("基础运算")
+                .navigationBarTitleDisplayMode(.large)
+                .toolbar {
+                    navigationToolbar(for: .basic)
+                }
+            }
+            .tabItem {
+                Label("基础运算", systemImage: "plus.forwardslash.minus")
+            }
+            .tag(AppPage.basic)
+
+            NavigationStack {
+                pageCanvas { useWideLayout, minHeight in
+                    counterPage(
+                        useWideLayout: useWideLayout,
+                        minHeight: minHeight
+                    )
+                }
+                .navigationTitle("快捷计算")
+                .navigationBarTitleDisplayMode(.large)
+                .toolbar {
+                    navigationToolbar(for: .counter)
+                }
+            }
+            .tabItem {
+                Label("快捷计算", systemImage: "plus.circle")
+            }
+            .tag(AppPage.counter)
         }
         .tint(Color.appAccent)
-        .animation(
-            .spring(response: 0.34, dampingFraction: 0.82),
-            value: model.page
-        )
         .animation(
             .spring(response: 0.3, dampingFraction: 0.84),
             value: model.mode
         )
-        .toolbar {
-            ToolbarItemGroup(placement: .keyboard) {
-                Button(model.page == .counter ? "清零" : "清空") {
-                    model.clear()
-                }
-                Spacer()
-                if model.page != .counter {
-                    Button("计算") {
-                        model.calculate()
-                    }
-                    .fontWeight(.semibold)
-                }
-                Button("完成") {
-                    focusedField = nil
+        .confirmationDialog(
+            "清空当前模式的历史记录？",
+            isPresented: $showHistoryClearConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("清空历史记录", role: .destructive) {
+                withAnimation(.easeOut(duration: 0.18)) {
+                    model.clearHistory()
                 }
             }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("清空后无法恢复，其他计算模式的记录不会受影响。")
         }
         .onChange(of: model.invalidField) { field in
             if let field {
@@ -88,138 +98,79 @@ struct CalculatorView: View {
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 13) {
-            ZStack {
-                Text(headerSymbol)
-                    .font(.system(size: 21, weight: .bold, design: .rounded))
-                    .foregroundStyle(Color.appAccent)
-            }
-            .frame(width: 50, height: 50)
-            .adaptiveGlassSurface(
-                cornerRadius: 16,
-                tint: Color.appAccent.opacity(0.08),
-                interactive: false,
-                reduceTransparency: reduceTransparency
+    @ViewBuilder
+    private func pageCanvas<Content: View>(
+        @ViewBuilder content: @escaping (Bool, CGFloat) -> Content
+    ) -> some View {
+        GeometryReader { geometry in
+            let useWideLayout = geometry.size.width >= 760
+            let horizontalPadding: CGFloat = useWideLayout ? 32 : 18
+            let verticalPadding: CGFloat = useWideLayout ? 24 : 16
+            let minHeight = max(
+                0,
+                geometry.size.height - verticalPadding * 2
             )
-            .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text("小秋计算器")
-                    .font(.title2.weight(.bold))
-                    .foregroundStyle(Color.primaryText)
-                Text(model.subtitle)
-                    .font(.subheadline)
-                    .foregroundStyle(Color.mutedText)
-                    .lineLimit(1)
+            ZStack {
+                CalculatorBackdrop(
+                    reduceTransparency: reduceTransparency
+                )
+
+                ScrollView {
+                    content(useWideLayout, minHeight)
+                        .frame(maxWidth: pageMaxWidth)
+                        .frame(
+                            minHeight: minHeight,
+                            alignment: .top
+                        )
+                        .padding(.horizontal, horizontalPadding)
+                        .padding(.vertical, verticalPadding)
+                        .frame(maxWidth: .infinity)
+                }
+                .scrollDismissesKeyboard(.interactively)
+            }
+        }
+    }
+
+    @ToolbarContentBuilder
+    private func navigationToolbar(
+        for page: AppPage
+    ) -> some ToolbarContent {
+        ToolbarItem(placement: .navigationBarTrailing) {
+            Button {
+                model.clear()
+            } label: {
+                Label(
+                    page == .counter ? "清零" : "清空输入",
+                    systemImage: page == .counter
+                        ? "arrow.counterclockwise"
+                        : "eraser"
+                )
+            }
+            .accessibilityHint(
+                page == .counter
+                    ? "将当前计数归零"
+                    : "清空当前页面的输入和结果"
+            )
+        }
+
+        ToolbarItemGroup(placement: .keyboard) {
+            Button(page == .counter ? "清零" : "清空") {
+                model.clear()
             }
 
             Spacer()
 
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(Color.appAccent)
-                    .frame(width: 7, height: 7)
-                Text("计算 / 工具")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.mutedText)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .adaptiveGlassSurface(
-                cornerRadius: 18,
-                interactive: false,
-                reduceTransparency: reduceTransparency
-            )
-        }
-    }
-
-    private var headerSymbol: String {
-        switch model.page {
-        case .calculator:
-            return "Σ"
-        case .basic:
-            return "±"
-        case .counter:
-            return "+1"
-        }
-    }
-
-    private var pagePicker: some View {
-        AdaptiveGlassContainer(spacing: 4) {
-            HStack(spacing: 4) {
-                ForEach(AppPage.allCases) { page in
-                    Button {
-                        withAnimation(
-                            .spring(
-                                response: 0.3,
-                                dampingFraction: 0.82
-                            )
-                        ) {
-                            model.page = page
-                        }
-                    } label: {
-                        Text(page.rawValue)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(
-                                model.page == page
-                                    ? Color.primaryText
-                                    : Color.mutedText
-                            )
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 11)
-                            .background {
-                                if model.page == page {
-                                    RoundedRectangle(
-                                        cornerRadius: 14,
-                                        style: .continuous
-                                    )
-                                    .fill(Color.selectionFill)
-                                    .shadow(
-                                        color: Color.shadowTint,
-                                        radius: 7,
-                                        x: 0,
-                                        y: 3
-                                    )
-                                }
-                            }
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel(page.rawValue)
-                    .accessibilityHint("切换到\(page.rawValue)")
+            if page != .counter {
+                Button("计算") {
+                    model.calculate()
                 }
+                .fontWeight(.semibold)
             }
-        }
-        .padding(5)
-        .adaptiveGlassSurface(
-            cornerRadius: 20,
-            interactive: false,
-            reduceTransparency: reduceTransparency
-        )
-        .accessibilityElement(children: .contain)
-    }
 
-    @ViewBuilder
-    private func pageContent(
-        useWideLayout: Bool,
-        minHeight: CGFloat
-    ) -> some View {
-        switch model.page {
-        case .calculator:
-            calculatorPage(
-                useWideLayout: useWideLayout,
-                minHeight: minHeight
-            )
-        case .basic:
-            basicPage(
-                useWideLayout: useWideLayout,
-                minHeight: minHeight
-            )
-        case .counter:
-            counterPage(
-                useWideLayout: useWideLayout,
-                minHeight: minHeight
-            )
+            Button("完成") {
+                focusedField = nil
+            }
         }
     }
 
@@ -227,9 +178,9 @@ struct CalculatorView: View {
         useWideLayout: Bool,
         minHeight: CGFloat
     ) -> some View {
-        return VStack(spacing: 16) {
+        VStack(spacing: useWideLayout ? 20 : 16) {
             modePicker
-                .frame(maxWidth: useWideLayout ? 520 : .infinity)
+                .frame(maxWidth: useWideLayout ? 460 : .infinity)
 
             historyPanel(useWideLayout: useWideLayout)
 
@@ -238,221 +189,153 @@ struct CalculatorView: View {
             } else {
                 multiplyAddWorkspace(useWideLayout: useWideLayout)
             }
+
+            inlineStatus
         }
         .frame(
             maxWidth: .infinity,
-            minHeight: useWideLayout ? minHeight : nil,
+            minHeight: minHeight,
             alignment: .top
         )
     }
 
     private var modePicker: some View {
-        AdaptiveGlassContainer(spacing: 4) {
-            HStack(spacing: 4) {
-                ForEach(CalculatorMode.allCases) { mode in
-                    Button {
-                        withAnimation(
-                            .spring(
-                                response: 0.3,
-                                dampingFraction: 0.82
-                            )
-                        ) {
-                            model.mode = mode
-                        }
-                    } label: {
-                        Text(mode.rawValue)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(
-                                model.mode == mode
-                                    ? Color.primaryText
-                                    : Color.mutedText
-                            )
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                            .background {
-                                if model.mode == mode {
-                                    RoundedRectangle(
-                                        cornerRadius: 13,
-                                        style: .continuous
-                                    )
-                                    .fill(Color.selectionFill)
-                                    .shadow(
-                                        color: Color.shadowTint,
-                                        radius: 6,
-                                        x: 0,
-                                        y: 2
-                                    )
-                                }
-                            }
-                    }
-                    .buttonStyle(.plain)
-                }
+        Picker("计算模式", selection: $model.mode) {
+            ForEach(CalculatorMode.allCases) { mode in
+                Text(mode.rawValue)
+                    .tag(mode)
             }
         }
-        .padding(5)
-        .adaptiveGlassSurface(
-            cornerRadius: 19,
-            interactive: false,
-            reduceTransparency: reduceTransparency
-        )
+        .pickerStyle(.segmented)
+        .accessibilityHint("在双结果和乘加计算之间切换")
     }
 
     @ViewBuilder
     private func standardWorkspace(useWideLayout: Bool) -> some View {
         if useWideLayout {
-            HStack(alignment: .bottom, spacing: 16) {
-                standardInputPanel(useWideLayout: false)
-                standardResults(useWideLayout: false)
+            HStack(alignment: .top, spacing: 16) {
+                standardInputPanel
+                standardResults
             }
         } else {
             VStack(spacing: 14) {
-                standardInputPanel(useWideLayout: false)
-                standardResults(useWideLayout: false)
+                standardInputPanel
+                standardResults
             }
         }
     }
 
-    private func standardInputPanel(useWideLayout: Bool) -> some View {
+    private var standardInputPanel: some View {
         VStack(alignment: .leading, spacing: 18) {
-            sectionHeader(title: "输入数据", detail: "输入后实时计算")
+            sectionHeader(
+                title: "输入数据",
+                detail: "输入后实时计算"
+            )
 
-            if useWideLayout {
-                HStack(alignment: .top, spacing: 12) {
-                    numericInput(
-                        field: .divisor,
-                        title: "可调除数",
-                        placeholder: CalculatorEngine.defaultDivisor
-                    )
-                    numericInput(
-                        field: .a,
-                        title: "A 数据",
-                        placeholder: "120.5"
-                    )
-                    numericInput(
-                        field: .b,
-                        title: "B 数据",
-                        placeholder: "475"
-                    )
-                }
-            } else {
-                VStack(spacing: 14) {
-                    numericInput(
-                        field: .divisor,
-                        title: "可调除数",
-                        placeholder: CalculatorEngine.defaultDivisor
-                    )
-                    numericInput(
-                        field: .a,
-                        title: "A 数据",
-                        placeholder: "120.5"
-                    )
-                    numericInput(
-                        field: .b,
-                        title: "B 数据",
-                        placeholder: "475"
-                    )
-                }
+            VStack(spacing: 14) {
+                numericInput(
+                    field: .divisor,
+                    title: "可调除数",
+                    placeholder: CalculatorEngine.defaultDivisor
+                )
+                numericInput(
+                    field: .a,
+                    title: "A 数据",
+                    placeholder: "120.5"
+                )
+                numericInput(
+                    field: .b,
+                    title: "B 数据",
+                    placeholder: "475"
+                )
             }
 
             panelDivider
             actionButtons(primaryTitle: "计算结果")
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .cardStyle(reduceTransparency: reduceTransparency)
+        .contentCard()
     }
 
-    private func standardResults(useWideLayout: Bool) -> some View {
+    private var standardResults: some View {
         VStack(alignment: .leading, spacing: 14) {
-            sectionHeader(title: "计算结果", detail: "最多保留 2 位小数")
+            sectionHeader(
+                title: "计算结果",
+                detail: "最多保留 2 位小数"
+            )
 
-            if useWideLayout {
-                HStack(spacing: 14) {
-                    resultCard(
-                        title: "总数",
-                        formula: "A + B",
-                        value: model.totalResult,
-                        featured: true
-                    )
-                    resultCard(
-                        title: "单独结果",
-                        formula: model.divideFormula,
-                        value: model.dividedResult,
-                        featured: false
-                    )
-                }
-            } else {
-                VStack(spacing: 12) {
-                    resultCard(
-                        title: "总数",
-                        formula: "A + B",
-                        value: model.totalResult,
-                        featured: true
-                    )
-                    resultCard(
-                        title: "单独结果",
-                        formula: model.divideFormula,
-                        value: model.dividedResult,
-                        featured: false
-                    )
-                }
+            VStack(spacing: 12) {
+                resultCard(
+                    title: "总数",
+                    formula: "A + B",
+                    value: model.totalResult,
+                    featured: true
+                )
+                resultCard(
+                    title: "单独结果",
+                    formula: model.divideFormula,
+                    value: model.dividedResult,
+                    featured: false
+                )
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .cardStyle(reduceTransparency: reduceTransparency)
+        .contentCard()
     }
 
-    private func multiplyAddInputPanel(useWideLayout: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            sectionHeader(title: "输入数据", detail: "系数默认 475")
+    @ViewBuilder
+    private func multiplyAddWorkspace(useWideLayout: Bool) -> some View {
+        if useWideLayout {
+            HStack(alignment: .top, spacing: 16) {
+                multiplyAddInputPanel
+                multiplyAddResults
+            }
+        } else {
+            VStack(spacing: 14) {
+                multiplyAddInputPanel
+                multiplyAddResults
+            }
+        }
+    }
 
-            if useWideLayout {
-                HStack(alignment: .top, spacing: 12) {
-                    numericInput(
-                        field: .coefficient,
-                        title: "系数",
-                        placeholder: CalculatorEngine.defaultCoefficient
-                    )
-                    numericInput(
-                        field: .multiplier,
-                        title: "乘数",
-                        placeholder: "2"
-                    )
-                    numericInput(
-                        field: .addend,
-                        title: "加数",
-                        placeholder: "25"
-                    )
-                }
-            } else {
-                VStack(spacing: 14) {
-                    numericInput(
-                        field: .coefficient,
-                        title: "系数",
-                        placeholder: CalculatorEngine.defaultCoefficient
-                    )
-                    numericInput(
-                        field: .multiplier,
-                        title: "乘数",
-                        placeholder: "2"
-                    )
-                    numericInput(
-                        field: .addend,
-                        title: "加数",
-                        placeholder: "25"
-                    )
-                }
+    private var multiplyAddInputPanel: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            sectionHeader(
+                title: "输入数据",
+                detail: "系数默认 475"
+            )
+
+            VStack(spacing: 14) {
+                numericInput(
+                    field: .coefficient,
+                    title: "系数",
+                    placeholder: CalculatorEngine.defaultCoefficient
+                )
+                numericInput(
+                    field: .multiplier,
+                    title: "乘数",
+                    placeholder: "2"
+                )
+                numericInput(
+                    field: .addend,
+                    title: "加数",
+                    placeholder: "25"
+                )
             }
 
             panelDivider
             actionButtons(primaryTitle: "计算结果")
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .cardStyle(reduceTransparency: reduceTransparency)
+        .contentCard()
     }
 
     private var multiplyAddResults: some View {
         VStack(alignment: .leading, spacing: 14) {
-            sectionHeader(title: "乘加结果", detail: "实时更新")
+            sectionHeader(
+                title: "乘加结果",
+                detail: "实时更新"
+            )
 
             resultCard(
                 title: "计算结果",
@@ -462,93 +345,66 @@ struct CalculatorView: View {
             )
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .cardStyle(reduceTransparency: reduceTransparency)
-    }
-
-    @ViewBuilder
-    private func multiplyAddWorkspace(useWideLayout: Bool) -> some View {
-        if useWideLayout {
-            HStack(alignment: .bottom, spacing: 16) {
-                multiplyAddInputPanel(useWideLayout: false)
-                multiplyAddResults
-            }
-        } else {
-            VStack(spacing: 14) {
-                multiplyAddInputPanel(useWideLayout: false)
-                multiplyAddResults
-            }
-        }
+        .contentCard()
     }
 
     private func basicPage(
         useWideLayout: Bool,
         minHeight: CGFloat
     ) -> some View {
-        VStack(spacing: 16) {
+        VStack(spacing: useWideLayout ? 20 : 16) {
             historyPanel(useWideLayout: useWideLayout)
             basicWorkspace(useWideLayout: useWideLayout)
+            inlineStatus
         }
         .frame(
             maxWidth: .infinity,
-            minHeight: useWideLayout ? minHeight : nil,
+            minHeight: minHeight,
             alignment: .top
         )
     }
 
-    private func basicInputPanel(useWideLayout: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
-            sectionHeader(title: "运算设置", detail: "固定值默认 475")
+    @ViewBuilder
+    private func basicWorkspace(useWideLayout: Bool) -> some View {
+        if useWideLayout {
+            HStack(alignment: .top, spacing: 16) {
+                basicInputPanel
+                basicResults
+            }
+        } else {
+            VStack(spacing: 14) {
+                basicInputPanel
+                basicResults
+            }
+        }
+    }
 
-            if useWideLayout {
-                HStack(alignment: .bottom, spacing: 12) {
-                    numericInput(
-                        field: .fixedValue,
-                        title: "固定值",
-                        placeholder: CalculatorEngine.defaultFixedValue
-                    )
-                    operationControl
-                    numericInput(
-                        field: .operationValue,
-                        title: "运算值",
-                        placeholder: "25"
-                    )
-                }
-            } else {
-                VStack(spacing: 14) {
-                    numericInput(
-                        field: .fixedValue,
-                        title: "固定值",
-                        placeholder: CalculatorEngine.defaultFixedValue
-                    )
-                    operationControl
-                    numericInput(
-                        field: .operationValue,
-                        title: "运算值",
-                        placeholder: "25"
-                    )
-                }
+    private var basicInputPanel: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            sectionHeader(
+                title: "运算设置",
+                detail: "固定值默认 475"
+            )
+
+            VStack(spacing: 14) {
+                numericInput(
+                    field: .fixedValue,
+                    title: "固定值",
+                    placeholder: CalculatorEngine.defaultFixedValue
+                )
+                operationControl
+                numericInput(
+                    field: .operationValue,
+                    title: "运算值",
+                    placeholder: "25"
+                )
             }
 
             panelDivider
             actionButtons(primaryTitle: "计算结果")
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .cardStyle(reduceTransparency: reduceTransparency)
-    }
-
-    @ViewBuilder
-    private func basicWorkspace(useWideLayout: Bool) -> some View {
-        if useWideLayout {
-            HStack(alignment: .bottom, spacing: 16) {
-                basicInputPanel(useWideLayout: false)
-                basicResults
-            }
-        } else {
-            VStack(spacing: 14) {
-                basicInputPanel(useWideLayout: false)
-                basicResults
-            }
-        }
+        .contentCard()
     }
 
     private var operationControl: some View {
@@ -556,56 +412,25 @@ struct CalculatorView: View {
             Text("运算符")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Color.primaryText)
-            operationPicker
+
+            Picker("运算符", selection: $model.basicOperation) {
+                ForEach(BasicOperation.allCases) { operation in
+                    Text(operation.rawValue)
+                        .tag(operation)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
         }
         .frame(maxWidth: .infinity)
     }
 
-    private var operationPicker: some View {
-        HStack(spacing: 4) {
-            ForEach(BasicOperation.allCases) { operation in
-                Button {
-                    withAnimation(.easeInOut(duration: 0.16)) {
-                        model.basicOperation = operation
-                    }
-                } label: {
-                    Text(operation.rawValue)
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(
-                            model.basicOperation == operation
-                                ? Color.appAccent
-                                : Color.mutedText
-                        )
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 9)
-                        .background {
-                            if model.basicOperation == operation {
-                                RoundedRectangle(
-                                    cornerRadius: 12,
-                                    style: .continuous
-                                )
-                                .fill(Color.surface)
-                                .shadow(
-                                    color: Color.shadowTint,
-                                    radius: 5,
-                                    x: 0,
-                                    y: 2
-                                )
-                            }
-                        }
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("运算符\(operation.rawValue)")
-            }
-        }
-        .padding(4)
-        .background(Color.controlBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-
     private var basicResults: some View {
         VStack(alignment: .leading, spacing: 14) {
-            sectionHeader(title: "运算结果", detail: "实时更新")
+            sectionHeader(
+                title: "运算结果",
+                detail: "实时更新"
+            )
 
             resultCard(
                 title: "计算结果",
@@ -615,25 +440,32 @@ struct CalculatorView: View {
             )
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .cardStyle(reduceTransparency: reduceTransparency)
+        .contentCard()
     }
 
     private func historyPanel(useWideLayout: Bool) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text("历史记录")
-                    .font(.headline)
-                    .foregroundStyle(Color.primaryText)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("历史记录")
+                        .font(.headline)
+                        .foregroundStyle(Color.primaryText)
+                    Text(historySubtitle)
+                        .font(.caption)
+                        .foregroundStyle(Color.faintText)
+                }
 
                 Spacer()
 
-                Label("点击区域清空", systemImage: "trash")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(
-                        model.visibleHistoryEntries.isEmpty
-                            ? Color.faintText
-                            : Color.appAccent
-                    )
+                Button {
+                    if !model.visibleHistoryEntries.isEmpty {
+                        showHistoryClearConfirmation = true
+                    }
+                } label: {
+                    Label("清空", systemImage: "trash")
+                        .font(.subheadline.weight(.semibold))
+                }
+                .disabled(model.visibleHistoryEntries.isEmpty)
             }
 
             panelDivider
@@ -646,7 +478,7 @@ struct CalculatorView: View {
                     Text("暂无计算记录")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Color.mutedText)
-                    Text("点击“计算结果”后会自动保存在这里")
+                    Text("正式计算后会自动保存在这里")
                         .font(.caption)
                         .foregroundStyle(Color.faintText)
                 }
@@ -657,7 +489,8 @@ struct CalculatorView: View {
                         ForEach(model.visibleHistoryEntries) { entry in
                             historyRow(entry)
 
-                            if entry.id != model.visibleHistoryEntries.last?.id {
+                            if entry.id
+                                != model.visibleHistoryEntries.last?.id {
                                 panelDivider
                                     .padding(.vertical, 10)
                             }
@@ -670,24 +503,36 @@ struct CalculatorView: View {
         .padding(20)
         .frame(
             maxWidth: .infinity,
-            minHeight: useWideLayout ? 190 : 160,
-            maxHeight: useWideLayout ? .infinity : nil,
+            minHeight: useWideLayout ? 250 : 180,
+            maxHeight: useWideLayout ? 320 : 240,
             alignment: .topLeading
         )
-        .adaptiveGlassSurface(
-            cornerRadius: 28,
-            tint: Color.historyGlassTint,
-            interactive: true,
-            reduceTransparency: reduceTransparency
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .background(Color.surface)
+        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .stroke(Color.border, lineWidth: 1)
+        }
+        .shadow(color: Color.shadowTint, radius: 12, x: 0, y: 5)
+        .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
         .onTapGesture {
-            withAnimation(.easeOut(duration: 0.18)) {
-                model.clearHistory()
+            if !model.visibleHistoryEntries.isEmpty {
+                showHistoryClearConfirmation = true
             }
         }
         .accessibilityElement(children: .contain)
-        .accessibilityHint("点击可清空当前页面的历史记录")
+        .accessibilityHint("点击历史区域可清空当前模式的记录")
+    }
+
+    private var historySubtitle: String {
+        switch model.page {
+        case .calculator:
+            return model.mode.rawValue
+        case .basic:
+            return "基础运算"
+        case .counter:
+            return ""
+        }
     }
 
     private func historyRow(_ entry: CalculationHistoryEntry) -> some View {
@@ -734,9 +579,7 @@ struct CalculatorView: View {
         VStack(spacing: useWideLayout ? 22 : 16) {
             counterDisplay(useWideLayout: useWideLayout)
 
-            if useWideLayout {
-                Spacer(minLength: 28)
-            }
+            Spacer(minLength: useWideLayout ? 36 : 22)
 
             Button {
                 model.incrementCounter()
@@ -745,31 +588,31 @@ struct CalculatorView: View {
                     Image(systemName: "plus")
                         .font(
                             .system(
-                                size: useWideLayout ? 48 : 34,
-                                weight: .medium
+                                size: useWideLayout ? 46 : 34,
+                                weight: .semibold
                             )
                         )
                     Text("加 1")
                         .font(useWideLayout ? .largeTitle.bold() : .title.bold())
-                    if useWideLayout {
-                        Text("点击按钮或按下空格键")
-                            .font(.subheadline)
-                            .foregroundStyle(Color.white.opacity(0.82))
-                    }
+                    Text("点击按钮或按下空格键")
+                        .font(.subheadline)
+                        .opacity(0.82)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity)
             }
             .adaptivePrimaryAction(
-                height: useWideLayout ? 210 : 116,
+                height: useWideLayout ? 190 : 138,
                 reduceTransparency: reduceTransparency
             )
             .keyboardShortcut(.space, modifiers: [])
             .accessibilityHint("每次点击使当前计数增加一")
+
+            inlineStatus
         }
         .frame(maxWidth: useWideLayout ? 900 : 620)
         .frame(
             maxWidth: .infinity,
-            minHeight: useWideLayout ? minHeight : nil,
+            minHeight: minHeight,
             alignment: .top
         )
     }
@@ -792,26 +635,12 @@ struct CalculatorView: View {
                     model.resetCounter()
                 } label: {
                     Label("清零", systemImage: "arrow.counterclockwise")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Color.primaryText)
-                        .padding(.horizontal, 14)
-                        .frame(height: 42)
-                        .background(Color.surfaceAlt)
-                        .clipShape(
-                            RoundedRectangle(
-                                cornerRadius: 14,
-                                style: .continuous
-                            )
-                        )
-                        .overlay {
-                            RoundedRectangle(
-                                cornerRadius: 14,
-                                style: .continuous
-                            )
-                            .stroke(Color.border, lineWidth: 1)
-                        }
                 }
-                .buttonStyle(.plain)
+                .adaptiveSecondaryAction(
+                    height: 44,
+                    reduceTransparency: reduceTransparency
+                )
+                .frame(maxWidth: 130)
             }
 
             panelDivider
@@ -831,7 +660,7 @@ struct CalculatorView: View {
                 .frame(maxWidth: .infinity)
         }
         .frame(maxWidth: .infinity)
-        .cardStyle(reduceTransparency: reduceTransparency)
+        .contentCard()
     }
 
     private var panelDivider: some View {
@@ -866,13 +695,15 @@ struct CalculatorView: View {
             .autocorrectionDisabled()
             .focused($focusedField, equals: field)
             .submitLabel(.done)
-            .onSubmit { model.calculate() }
+            .onSubmit {
+                model.calculate()
+            }
             .padding(.horizontal, 15)
             .frame(height: 54)
             .background(Color.surfaceAlt)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                RoundedRectangle(cornerRadius: 15, style: .continuous)
                     .stroke(
                         fieldBorderColor(field),
                         lineWidth: fieldBorderWidth(field)
@@ -885,30 +716,28 @@ struct CalculatorView: View {
     }
 
     private func actionButtons(primaryTitle: String) -> some View {
-        AdaptiveGlassContainer(spacing: 12) {
-            HStack(spacing: 12) {
-                Button {
-                    model.clear()
-                } label: {
-                    Text("清空")
-                        .frame(maxWidth: .infinity)
-                }
-                .adaptiveSecondaryAction(
-                    height: 56,
-                    reduceTransparency: reduceTransparency
-                )
-
-                Button {
-                    model.calculate()
-                } label: {
-                    Label(primaryTitle, systemImage: "equal")
-                        .frame(maxWidth: .infinity)
-                }
-                .adaptivePrimaryAction(
-                    height: 56,
-                    reduceTransparency: reduceTransparency
-                )
+        HStack(spacing: 12) {
+            Button {
+                model.clear()
+            } label: {
+                Text("清空")
+                    .frame(maxWidth: .infinity)
             }
+            .adaptiveSecondaryAction(
+                height: 56,
+                reduceTransparency: reduceTransparency
+            )
+
+            Button {
+                model.calculate()
+            } label: {
+                Label(primaryTitle, systemImage: "equal")
+                    .frame(maxWidth: .infinity)
+            }
+            .adaptivePrimaryAction(
+                height: 56,
+                reduceTransparency: reduceTransparency
+            )
         }
     }
 
@@ -952,9 +781,9 @@ struct CalculatorView: View {
         .padding(18)
         .frame(maxWidth: .infinity, minHeight: 112)
         .background(Color.surfaceAlt)
-        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 19, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: 19, style: .continuous)
                 .stroke(
                     featured ? Color.accentBorder : Color.border,
                     lineWidth: featured ? 1.5 : 1
@@ -963,11 +792,10 @@ struct CalculatorView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var statusBar: some View {
+    private var inlineStatus: some View {
         HStack(spacing: 10) {
-            Circle()
-                .fill(statusForeground)
-                .frame(width: 8, height: 8)
+            Image(systemName: statusSymbol)
+                .foregroundStyle(statusForeground)
                 .accessibilityHidden(true)
             Text(model.status)
                 .font(.footnote)
@@ -976,29 +804,20 @@ struct CalculatorView: View {
         }
         .padding(.horizontal, 15)
         .padding(.vertical, 12)
-        .adaptiveGlassSurface(
-            cornerRadius: 16,
-            tint: statusGlassTint,
-            interactive: false,
-            reduceTransparency: reduceTransparency,
-            fallbackColor: statusBackground
-        )
+        .background(statusBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(statusForeground.opacity(0.16), lineWidth: 1)
+        }
         .animation(.easeOut(duration: 0.18), value: model.status)
         .accessibilityLabel("状态：\(model.status)")
     }
 
-    private var keyboardHint: some View {
-        Text(
-            model.page == .counter
-                ? "快捷计数仅在此页面响应空格键"
-                : "输入完整后会实时计算，也可点按钮明确校验"
-        )
-        .font(.caption)
-        .foregroundStyle(Color.faintText)
-        .frame(maxWidth: .infinity, alignment: .trailing)
-    }
-
-    private func sectionHeader(title: String, detail: String) -> some View {
+    private func sectionHeader(
+        title: String,
+        detail: String
+    ) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(title)
                 .font(.headline)
@@ -1031,6 +850,17 @@ struct CalculatorView: View {
         return .system(size: 23, weight: .medium, design: .rounded)
     }
 
+    private var statusSymbol: String {
+        switch model.statusTone {
+        case .neutral:
+            return "info.circle.fill"
+        case .success:
+            return "checkmark.circle.fill"
+        case .error:
+            return "exclamationmark.triangle.fill"
+        }
+    }
+
     private var statusForeground: Color {
         switch model.statusTone {
         case .neutral:
@@ -1052,20 +882,9 @@ struct CalculatorView: View {
             return .errorSoft
         }
     }
-
-    private var statusGlassTint: Color? {
-        switch model.statusTone {
-        case .neutral:
-            return nil
-        case .success:
-            return .successText.opacity(0.08)
-        case .error:
-            return .errorText.opacity(0.08)
-        }
-    }
 }
 
-private struct LiquidGlassBackdrop: View {
+private struct CalculatorBackdrop: View {
     let reduceTransparency: Bool
 
     var body: some View {
@@ -1086,7 +905,7 @@ private struct LiquidGlassBackdrop: View {
                         .fill(
                             RadialGradient(
                                 colors: [
-                                    Color.appAccent.opacity(0.26),
+                                    Color.appAccent.opacity(0.22),
                                     Color.appAccent.opacity(0)
                                 ],
                                 center: .center,
@@ -1108,7 +927,7 @@ private struct LiquidGlassBackdrop: View {
                         .fill(
                             RadialGradient(
                                 colors: [
-                                    Color.coolGlow.opacity(0.2),
+                                    Color.coolGlow.opacity(0.18),
                                     Color.coolGlow.opacity(0)
                                 ],
                                 center: .center,
@@ -1133,54 +952,21 @@ private struct LiquidGlassBackdrop: View {
     }
 }
 
-private struct AdaptiveGlassContainer<Content: View>: View {
-    let spacing: CGFloat
-    let content: Content
-
-    @Environment(\.accessibilityReduceTransparency)
-    private var reduceTransparency
-
-    init(
-        spacing: CGFloat,
-        @ViewBuilder content: () -> Content
-    ) {
-        self.spacing = spacing
-        self.content = content()
-    }
-
-    @ViewBuilder
-    var body: some View {
-        if #available(iOS 26.0, *), !reduceTransparency {
-            GlassEffectContainer(spacing: spacing) {
-                content
-            }
-        } else {
-            content
-        }
-    }
-}
-
 private struct PrimaryActionButtonStyle: ButtonStyle {
-    var height: CGFloat? = 50
-    var minHeight: CGFloat? = nil
+    var height: CGFloat
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.headline)
             .foregroundStyle(Color.accentButtonText)
             .padding(.horizontal, 16)
-            .frame(
-                maxWidth: .infinity,
-                minHeight: minHeight,
-                idealHeight: height,
-                maxHeight: minHeight == nil ? height : .infinity
-            )
+            .frame(maxWidth: .infinity, minHeight: height)
             .background(
                 configuration.isPressed
                     ? Color.accentHover
                     : Color.appAccent
             )
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .shadow(
                 color: Color.accentShadow,
                 radius: configuration.isPressed ? 4 : 10,
@@ -1193,20 +979,20 @@ private struct PrimaryActionButtonStyle: ButtonStyle {
 }
 
 private struct SecondaryActionButtonStyle: ButtonStyle {
-    var height: CGFloat = 50
+    var height: CGFloat
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.headline)
             .foregroundStyle(Color.primaryText)
             .padding(.horizontal, 16)
-            .frame(height: height)
+            .frame(maxWidth: .infinity, minHeight: height)
             .background(
                 configuration.isPressed ? Color.surfaceAlt : Color.surface
             )
-            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
                     .stroke(Color.border, lineWidth: 1)
             }
             .shadow(
@@ -1222,69 +1008,13 @@ private struct SecondaryActionButtonStyle: ButtonStyle {
 
 private extension View {
     @ViewBuilder
-    func adaptiveGlassSurface(
-        cornerRadius: CGFloat,
-        tint: Color? = nil,
-        interactive: Bool,
-        reduceTransparency: Bool,
-        fallbackColor: Color = .surface
-    ) -> some View {
-        if #available(iOS 26.0, *), !reduceTransparency {
-            if let tint {
-                if interactive {
-                    glassEffect(
-                        .regular.tint(tint).interactive(),
-                        in: .rect(cornerRadius: cornerRadius)
-                    )
-                } else {
-                    glassEffect(
-                        .regular.tint(tint),
-                        in: .rect(cornerRadius: cornerRadius)
-                    )
-                }
-            } else if interactive {
-                glassEffect(
-                    .regular.interactive(),
-                    in: .rect(cornerRadius: cornerRadius)
-                )
-            } else {
-                glassEffect(
-                    .regular,
-                    in: .rect(cornerRadius: cornerRadius)
-                )
-            }
-        } else {
-            background(fallbackColor)
-                .clipShape(
-                    RoundedRectangle(
-                        cornerRadius: cornerRadius,
-                        style: .continuous
-                    )
-                )
-                .overlay {
-                    RoundedRectangle(
-                        cornerRadius: cornerRadius,
-                        style: .continuous
-                    )
-                    .stroke(Color.border, lineWidth: 1)
-                }
-                .shadow(
-                    color: Color.shadowTint,
-                    radius: 12,
-                    x: 0,
-                    y: 5
-                )
-        }
-    }
-
-    @ViewBuilder
     func adaptivePrimaryAction(
         height: CGFloat,
         reduceTransparency: Bool
     ) -> some View {
         if #available(iOS 26.0, *), !reduceTransparency {
             font(.headline)
-                .frame(height: height)
+                .frame(minHeight: height)
                 .buttonStyle(.glassProminent)
                 .tint(Color.appAccent)
         } else {
@@ -1299,7 +1029,7 @@ private extension View {
     ) -> some View {
         if #available(iOS 26.0, *), !reduceTransparency {
             font(.headline)
-                .frame(height: height)
+                .frame(minHeight: height)
                 .buttonStyle(.glass)
                 .tint(Color.primaryText)
         } else {
@@ -1307,13 +1037,15 @@ private extension View {
         }
     }
 
-    func cardStyle(reduceTransparency: Bool) -> some View {
+    func contentCard() -> some View {
         padding(22)
-            .adaptiveGlassSurface(
-                cornerRadius: 28,
-                interactive: false,
-                reduceTransparency: reduceTransparency
-            )
+            .background(Color.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    .stroke(Color.border, lineWidth: 1)
+            }
+            .shadow(color: Color.shadowTint, radius: 12, x: 0, y: 5)
     }
 }
 
@@ -1324,18 +1056,6 @@ private extension Color {
     static let coolGlow = Color(light: 0x7CCDE3, dark: 0x3E91A9)
     static let surface = Color(light: 0xFDFDFC, dark: 0x252628)
     static let surfaceAlt = Color(light: 0xF5F4F1, dark: 0x303134)
-    static let controlBackground = Color(
-        light: 0xE8E7E3,
-        dark: 0x2C2D2F
-    )
-    static let selectionFill = Color(
-        light: 0xFFFFFF,
-        dark: 0x3A3B3E
-    ).opacity(0.82)
-    static let historyGlassTint = Color(
-        light: 0xFFFFFF,
-        dark: 0x202123
-    ).opacity(0.12)
     static let border = Color(light: 0xDEDDD8, dark: 0x45474A)
     static let primaryText = Color(light: 0x171717, dark: 0xF6F4F1)
     static let mutedText = Color(light: 0x6F7074, dark: 0xB6B7BA)
@@ -1343,7 +1063,6 @@ private extension Color {
     static let appAccent = Color(hex: 0xFF7500)
     static let accentHover = Color(hex: 0xE96900)
     static let accentButtonText = Color.white
-    static let accentSoft = Color(light: 0xFFF0E3, dark: 0x432819)
     static let accentBorder = Color(light: 0xFFC68F, dark: 0x955426)
     static let successText = Color(light: 0x31825B, dark: 0x6ED2A0)
     static let successSoft = Color(light: 0xEAF7EF, dark: 0x173629)

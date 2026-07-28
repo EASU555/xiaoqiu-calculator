@@ -35,7 +35,7 @@ struct CalculationResult: Equatable {
     let divided: String
 }
 
-enum BasicOperation: String, CaseIterable, Identifiable {
+enum BasicOperation: String, CaseIterable, Identifiable, Hashable {
     case add = "+"
     case subtract = "−"
     case multiply = "×"

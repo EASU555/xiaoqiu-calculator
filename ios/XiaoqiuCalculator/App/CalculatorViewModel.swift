@@ -1,15 +1,15 @@
 import Combine
 import Foundation
 
-enum AppPage: String, CaseIterable, Identifiable {
+enum AppPage: String, CaseIterable, Identifiable, Hashable {
     case calculator = "计算器"
     case basic = "基础运算"
-    case counter = "快捷计数"
+    case counter = "快捷计算"
 
     var id: String { rawValue }
 }
 
-enum CalculatorMode: String, CaseIterable, Identifiable {
+enum CalculatorMode: String, CaseIterable, Identifiable, Hashable {
     case standard = "双结果"
     case multiplyAdd = "乘加计算"
 
