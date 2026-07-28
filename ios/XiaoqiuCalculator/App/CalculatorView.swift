@@ -766,10 +766,21 @@ struct CalculatorView: View {
         availableHeight: CGFloat,
         availableWidth: CGFloat
     ) -> some View {
+        let keySpacing = CalculatorLayoutMetrics.keypadSpacing(
+            useWideLayout: useWideLayout
+        )
+        let gridWidth = CalculatorLayoutMetrics.keypadGridWidth(
+            availableWidth: availableWidth,
+            useWideLayout: useWideLayout
+        )
         let keyHeight = CalculatorLayoutMetrics.keypadKeyHeight(
             availableHeight: availableHeight,
             availableWidth: availableWidth,
             useWideLayout: useWideLayout
+        )
+        let columns = Array(
+            repeating: GridItem(.flexible(), spacing: keySpacing),
+            count: 4
         )
 
         return VStack(spacing: useWideLayout ? 12 : 10) {
@@ -794,36 +805,41 @@ struct CalculatorView: View {
                 .clipShape(Capsule())
             }
 
-            ForEach(keypadRows.indices, id: \.self) { rowIndex in
-                HStack(spacing: useWideLayout ? 10 : 8) {
-                    ForEach(keypadRows[rowIndex]) { key in
-                        Button {
-                            handleKeypadKey(key)
-                        } label: {
-                            Group {
-                                if let systemImage = key.systemImage {
-                                    Image(systemName: systemImage)
-                                } else {
-                                    Text(key.title)
-                                }
+            LazyVGrid(columns: columns, spacing: keySpacing) {
+                ForEach(keypadKeys) { key in
+                    Button {
+                        handleKeypadKey(key)
+                    } label: {
+                        Group {
+                            if let systemImage = key.systemImage {
+                                Image(systemName: systemImage)
+                            } else {
+                                Text(key.title)
                             }
-                            .font(
-                                key.isPrimary
-                                    ? .headline
-                                    : .title3.weight(.semibold)
-                            )
-                            .frame(maxWidth: .infinity)
-                            .frame(height: keyHeight)
                         }
-                        .buttonStyle(
-                            CalculatorKeyButtonStyle(
-                                isPrimary: key.isPrimary
-                            )
+                        .font(
+                            key.usesCompactLabel
+                                ? .subheadline.weight(.semibold)
+                                : .title2.weight(.semibold)
                         )
-                        .accessibilityLabel(key.accessibilityLabel)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: keyHeight)
                     }
+                    .buttonStyle(
+                        CalculatorKeyButtonStyle(
+                            role: key.role,
+                            cornerRadius: CalculatorLayoutMetrics
+                                .keypadCornerRadius(
+                                    keyHeight: keyHeight,
+                                    useWideLayout: useWideLayout
+                                )
+                        )
+                    )
+                    .accessibilityLabel(key.accessibilityLabel)
                 }
             }
+            .frame(maxWidth: gridWidth)
+            .frame(maxWidth: .infinity)
         }
         .padding(useWideLayout ? 16 : 14)
         .frame(maxWidth: .infinity)
@@ -935,11 +951,12 @@ struct CalculatorView: View {
         model.invalidField == field || activeField == field ? 2 : 1
     }
 
-    private var keypadRows: [[CalculatorKey]] {
+    private var keypadKeys: [CalculatorKey] {
         [
-            [.digit("1"), .digit("2"), .digit("3"), .clear, .delete],
-            [.digit("4"), .digit("5"), .digit("6"), .toggleSign, .decimal],
-            [.digit("7"), .digit("8"), .digit("9"), .digit("0"), .calculate]
+            .digit("7"), .digit("8"), .digit("9"), .delete,
+            .digit("4"), .digit("5"), .digit("6"), .clear,
+            .digit("1"), .digit("2"), .digit("3"), .toggleSign,
+            .digit("0"), .decimal, .nextField, .calculate
         ]
     }
 
@@ -985,6 +1002,11 @@ struct CalculatorView: View {
             return
         }
 
+        if key == .nextField {
+            selectNextInputField()
+            return
+        }
+
         guard
             let activeField,
             let input = key.input
@@ -1004,6 +1026,46 @@ struct CalculatorView: View {
         if didChange {
             replaceActiveValue = false
         }
+    }
+
+    private func selectNextInputField() {
+        let fields: [CalculatorField]
+
+        switch model.page {
+        case .calculator:
+            fields = model.mode == .standard
+                ? [.a, .b, .divisor]
+                : [.multiplier, .addend, .coefficient]
+        case .basic:
+            fields = [.operationValue, .fixedValue]
+        case .counter:
+            fields = []
+        }
+
+        guard let firstField = fields.first else {
+            activeField = nil
+            replaceActiveValue = false
+            return
+        }
+
+        guard
+            let activeField,
+            let currentIndex = fields.firstIndex(of: activeField)
+        else {
+            self.activeField = firstField
+            replaceActiveValue = !model.text(for: firstField).isEmpty
+            return
+        }
+
+        let nextIndex = fields.index(
+            after: currentIndex
+        ) == fields.endIndex
+            ? fields.startIndex
+            : fields.index(after: currentIndex)
+        let nextField = fields[nextIndex]
+
+        self.activeField = nextField
+        replaceActiveValue = !model.text(for: nextField).isEmpty
     }
 
     private func resultFont(for value: String) -> Font {
@@ -1051,21 +1113,48 @@ struct CalculatorView: View {
 }
 
 enum CalculatorLayoutMetrics {
+    static func keypadSpacing(useWideLayout: Bool) -> CGFloat {
+        useWideLayout ? 12 : 8
+    }
+
+    static func keypadGridWidth(
+        availableWidth: CGFloat,
+        useWideLayout: Bool
+    ) -> CGFloat {
+        let horizontalInset: CGFloat = useWideLayout ? 32 : 28
+        let usableWidth = max(0, availableWidth - horizontalInset)
+
+        return useWideLayout ? min(720, usableWidth) : usableWidth
+    }
+
     static func keypadKeyHeight(
         availableHeight: CGFloat,
         availableWidth: CGFloat,
         useWideLayout: Bool
     ) -> CGFloat {
-        let minimum: CGFloat = useWideLayout ? 64 : 48
-        let maximum: CGFloat = useWideLayout ? 112 : 56
-        let heightRatio: CGFloat = useWideLayout ? 0.10 : 0.065
-        let widthRatio: CGFloat = useWideLayout ? 0.085 : 0.14
+        let spacing = keypadSpacing(useWideLayout: useWideLayout)
+        let gridWidth = keypadGridWidth(
+            availableWidth: availableWidth,
+            useWideLayout: useWideLayout
+        )
+        let keyWidth = max(0, (gridWidth - spacing * 3) / 4)
+        let minimum: CGFloat = useWideLayout ? 72 : 52
+        let maximum: CGFloat = useWideLayout ? 104 : 60
+        let heightRatio: CGFloat = useWideLayout ? 0.085 : 0.07
+        let keyAspectRatio: CGFloat = useWideLayout ? 0.62 : 0.74
         let proposedHeight = max(
             availableHeight * heightRatio,
-            availableWidth * widthRatio
+            keyWidth * keyAspectRatio
         )
 
         return min(maximum, max(minimum, proposedHeight))
+    }
+
+    static func keypadCornerRadius(
+        keyHeight: CGFloat,
+        useWideLayout: Bool
+    ) -> CGFloat {
+        min(useWideLayout ? 24 : 20, keyHeight * 0.28)
     }
 }
 
@@ -1075,6 +1164,7 @@ private enum CalculatorKey: Identifiable, Equatable {
     case clear
     case delete
     case toggleSign
+    case nextField
     case calculate
 
     var id: String {
@@ -1089,6 +1179,8 @@ private enum CalculatorKey: Identifiable, Equatable {
             return "delete"
         case .toggleSign:
             return "toggle-sign"
+        case .nextField:
+            return "next-field"
         case .calculate:
             return "calculate"
         }
@@ -1106,6 +1198,8 @@ private enum CalculatorKey: Identifiable, Equatable {
             return ""
         case .toggleSign:
             return "±"
+        case .nextField:
+            return "下一项"
         case .calculate:
             return "计算"
         }
@@ -1127,6 +1221,8 @@ private enum CalculatorKey: Identifiable, Equatable {
             return "删除一位"
         case .toggleSign:
             return "切换正负号"
+        case .nextField:
+            return "选择下一输入项"
         case .calculate:
             return "计算"
         }
@@ -1144,7 +1240,7 @@ private enum CalculatorKey: Identifiable, Equatable {
             return .delete
         case .toggleSign:
             return .toggleSign
-        case .calculate:
+        case .nextField, .calculate:
             return nil
         }
     }
@@ -1156,31 +1252,51 @@ private enum CalculatorKey: Identifiable, Equatable {
         return false
     }
 
-    var isPrimary: Bool {
-        self == .calculate
+    var usesCompactLabel: Bool {
+        self == .nextField || self == .calculate
+    }
+
+    var role: CalculatorKeyRole {
+        switch self {
+        case .calculate:
+            return .primary
+        case .clear, .delete, .toggleSign, .nextField:
+            return .utility
+        case .digit, .decimal:
+            return .number
+        }
     }
 }
 
+private enum CalculatorKeyRole: Equatable {
+    case number
+    case utility
+    case primary
+}
+
 private struct CalculatorKeyButtonStyle: ButtonStyle {
-    let isPrimary: Bool
+    let role: CalculatorKeyRole
+    let cornerRadius: CGFloat
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .foregroundStyle(isPrimary ? Color.white : Color.primaryText)
-            .background(
-                isPrimary
-                    ? Color.appAccent
-                    : (
-                        configuration.isPressed
-                            ? Color.appAccent.opacity(0.12)
-                            : Color.surfaceAlt
-                    )
+            .foregroundStyle(foregroundColor)
+            .background(backgroundColor(isPressed: configuration.isPressed))
+            .clipShape(
+                RoundedRectangle(
+                    cornerRadius: cornerRadius,
+                    style: .continuous
+                )
             )
-            .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 15, style: .continuous)
+                RoundedRectangle(
+                    cornerRadius: cornerRadius,
+                    style: .continuous
+                )
                     .stroke(
-                        isPrimary ? Color.accentBorder : Color.border,
+                        role == .primary
+                            ? Color.accentBorder
+                            : Color.border,
                         lineWidth: 1
                     )
             }
@@ -1189,6 +1305,32 @@ private struct CalculatorKeyButtonStyle: ButtonStyle {
                 .easeOut(duration: 0.12),
                 value: configuration.isPressed
             )
+    }
+
+    private var foregroundColor: Color {
+        switch role {
+        case .number:
+            return .primaryText
+        case .utility:
+            return .appAccent
+        case .primary:
+            return .white
+        }
+    }
+
+    private func backgroundColor(isPressed: Bool) -> Color {
+        if isPressed {
+            return Color.appAccent.opacity(role == .primary ? 0.82 : 0.16)
+        }
+
+        switch role {
+        case .number:
+            return .surfaceAlt
+        case .utility:
+            return Color.appAccent.opacity(0.10)
+        case .primary:
+            return .appAccent
+        }
     }
 }
 

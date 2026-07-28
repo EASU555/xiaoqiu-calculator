@@ -10,7 +10,7 @@ final class CalculatorEngineTests: XCTestCase {
                 availableWidth: 357,
                 useWideLayout: false
             ),
-            48,
+            56.425,
             accuracy: 0.001
         )
         XCTAssertEqual(
@@ -19,7 +19,7 @@ final class CalculatorEngineTests: XCTestCase {
                 availableWidth: 357,
                 useWideLayout: false
             ),
-            52,
+            56.425,
             accuracy: 0.001
         )
         XCTAssertEqual(
@@ -28,7 +28,7 @@ final class CalculatorEngineTests: XCTestCase {
                 availableWidth: 960,
                 useWideLayout: true
             ),
-            81.6,
+            104,
             accuracy: 0.001
         )
         XCTAssertEqual(
@@ -37,7 +37,7 @@ final class CalculatorEngineTests: XCTestCase {
                 availableWidth: 960,
                 useWideLayout: true
             ),
-            112,
+            104,
             accuracy: 0.001
         )
         XCTAssertEqual(
@@ -46,7 +46,34 @@ final class CalculatorEngineTests: XCTestCase {
                 availableWidth: 1_300,
                 useWideLayout: true
             ),
-            110.5,
+            104,
+            accuracy: 0.001
+        )
+    }
+
+    func testKeypadGridStaysProportionalAcrossPhoneAndTabletWidths() {
+        XCTAssertEqual(
+            CalculatorLayoutMetrics.keypadGridWidth(
+                availableWidth: 357,
+                useWideLayout: false
+            ),
+            329,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            CalculatorLayoutMetrics.keypadGridWidth(
+                availableWidth: 960,
+                useWideLayout: true
+            ),
+            720,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(
+            CalculatorLayoutMetrics.keypadGridWidth(
+                availableWidth: 1_300,
+                useWideLayout: true
+            ),
+            720,
             accuracy: 0.001
         )
     }
