@@ -4,6 +4,11 @@ enum CalculatorField: String, Hashable {
     case a
     case b
     case divisor
+    case coefficient
+    case multiplier
+    case addend
+    case fixedValue
+    case operationValue
 }
 
 enum CalculatorIssue: Error, Equatable {
@@ -30,8 +35,19 @@ struct CalculationResult: Equatable {
     let divided: String
 }
 
+enum BasicOperation: String, CaseIterable, Identifiable {
+    case add = "+"
+    case subtract = "−"
+    case multiply = "×"
+    case divide = "÷"
+
+    var id: String { rawValue }
+}
+
 enum CalculatorEngine {
     static let defaultDivisor = "475"
+    static let defaultCoefficient = "475"
+    static let defaultFixedValue = "475"
     static let maxInputLength = 64
     static let maxResultLength = 24
 
@@ -55,6 +71,10 @@ enum CalculatorEngine {
             return false
         }
         return !parsed.isZero
+    }
+
+    static func isValidNumber(_ value: String, field: CalculatorField) -> Bool {
+        (try? parseNumber(value, label: label(for: field), field: field)) != nil
     }
 
     static func calculate(
@@ -96,6 +116,109 @@ enum CalculatorEngine {
         }
 
         return CalculationResult(total: total, divided: divided)
+    }
+
+    static func calculateMultiplyAdd(
+        coefficientText: String,
+        multiplierText: String,
+        addendText: String
+    ) throws -> String {
+        let coefficient = try parseNumber(
+            coefficientText,
+            label: "系数",
+            field: .coefficient
+        )
+        let multiplier = try parseNumber(
+            multiplierText,
+            label: "乘数",
+            field: .multiplier
+        )
+        let addend = try parseNumber(
+            addendText,
+            label: "加数",
+            field: .addend
+        )
+        let result = coefficient
+            .multiplied(by: multiplier)
+            .adding(addend)
+            .roundedString(fractionDigits: 2)
+        return try validateResultLength(result)
+    }
+
+    static func calculateBasic(
+        fixedValueText: String,
+        operationValueText: String,
+        operation: BasicOperation
+    ) throws -> String {
+        let fixedValue = try parseNumber(
+            fixedValueText,
+            label: "固定值",
+            field: .fixedValue
+        )
+        let operationValue = try parseNumber(
+            operationValueText,
+            label: "运算值",
+            field: .operationValue
+        )
+
+        let result: String
+        switch operation {
+        case .add:
+            result = fixedValue
+                .adding(operationValue)
+                .roundedString(fractionDigits: 2)
+        case .subtract:
+            result = fixedValue
+                .subtracting(operationValue)
+                .roundedString(fractionDigits: 2)
+        case .multiply:
+            result = fixedValue
+                .multiplied(by: operationValue)
+                .roundedString(fractionDigits: 2)
+        case .divide:
+            guard !operationValue.isZero else {
+                throw CalculatorIssue.input(
+                    message: "进行除法时，运算值不能为 0。",
+                    field: .operationValue
+                )
+            }
+            result = ArbitraryDecimal.dividing(
+                fixedValue,
+                by: operationValue,
+                fractionDigits: 2
+            )
+        }
+        return try validateResultLength(result)
+    }
+
+    private static func validateResultLength(_ result: String) throws -> String {
+        guard result.count <= maxResultLength else {
+            throw CalculatorIssue.range(
+                message: "计算结果过长，请缩小输入值。"
+            )
+        }
+        return result
+    }
+
+    private static func label(for field: CalculatorField) -> String {
+        switch field {
+        case .a:
+            return "A"
+        case .b:
+            return "B"
+        case .divisor:
+            return "除数"
+        case .coefficient:
+            return "系数"
+        case .multiplier:
+            return "乘数"
+        case .addend:
+            return "加数"
+        case .fixedValue:
+            return "固定值"
+        case .operationValue:
+            return "运算值"
+        }
     }
 
     private static func parseNumber(
@@ -224,6 +347,24 @@ private struct ArbitraryDecimal: Equatable {
                 scale: commonScale
             )
         }
+    }
+
+    func subtracting(_ other: ArbitraryDecimal) -> ArbitraryDecimal {
+        adding(
+            ArbitraryDecimal(
+                sign: -other.sign,
+                digits: other.digits,
+                scale: other.scale
+            )
+        )
+    }
+
+    func multiplied(by other: ArbitraryDecimal) -> ArbitraryDecimal {
+        ArbitraryDecimal(
+            sign: sign * other.sign,
+            digits: BigInteger.multiply(digits, other.digits),
+            scale: scale + other.scale
+        )
     }
 
     func roundedString(fractionDigits: Int) -> String {
@@ -424,6 +565,24 @@ private enum BigInteger {
         }
 
         return String(bytes: output.reversed(), encoding: .utf8) ?? "0"
+    }
+
+    static func multiply(_ left: String, _ right: String) -> String {
+        let left = stripLeadingZeroes(left)
+        let right = stripLeadingZeroes(right)
+        guard left != "0", right != "0" else {
+            return "0"
+        }
+
+        var result = "0"
+        for (offset, byte) in right.utf8.reversed().enumerated() {
+            let digit = Int(byte - 48)
+            guard digit > 0 else { continue }
+            let partial = multiply(left, by: digit)
+                + String(repeating: "0", count: offset)
+            result = add(result, partial)
+        }
+        return stripLeadingZeroes(result)
     }
 
     static func divide(

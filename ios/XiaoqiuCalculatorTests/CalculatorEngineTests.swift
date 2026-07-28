@@ -31,6 +31,116 @@ final class CalculatorEngineTests: XCTestCase {
         )
     }
 
+    func testMultiplyAddWithDefaultAndCustomCoefficient() throws {
+        XCTAssertEqual(
+            try CalculatorEngine.calculateMultiplyAdd(
+                coefficientText: "475",
+                multiplierText: "2",
+                addendText: "25"
+            ),
+            "975"
+        )
+        XCTAssertEqual(
+            try CalculatorEngine.calculateMultiplyAdd(
+                coefficientText: "1.5",
+                multiplierText: "4",
+                addendText: "2"
+            ),
+            "8"
+        )
+        XCTAssertEqual(
+            try CalculatorEngine.calculateMultiplyAdd(
+                coefficientText: "-3",
+                multiplierText: "2",
+                addendText: "1"
+            ),
+            "-5"
+        )
+    }
+
+    func testMultiplyAddRoundsHalfUp() throws {
+        XCTAssertEqual(
+            try CalculatorEngine.calculateMultiplyAdd(
+                coefficientText: "1.005",
+                multiplierText: "1",
+                addendText: "0"
+            ),
+            "1.01"
+        )
+    }
+
+    func testBasicOperations() throws {
+        XCTAssertEqual(
+            try CalculatorEngine.calculateBasic(
+                fixedValueText: "475",
+                operationValueText: "25",
+                operation: .add
+            ),
+            "500"
+        )
+        XCTAssertEqual(
+            try CalculatorEngine.calculateBasic(
+                fixedValueText: "475",
+                operationValueText: "25",
+                operation: .subtract
+            ),
+            "450"
+        )
+        XCTAssertEqual(
+            try CalculatorEngine.calculateBasic(
+                fixedValueText: "12",
+                operationValueText: "2.5",
+                operation: .multiply
+            ),
+            "30"
+        )
+        XCTAssertEqual(
+            try CalculatorEngine.calculateBasic(
+                fixedValueText: "10",
+                operationValueText: "4",
+                operation: .divide
+            ),
+            "2.5"
+        )
+    }
+
+    func testBasicOperationSupportsNegativeValues() throws {
+        XCTAssertEqual(
+            try CalculatorEngine.calculateBasic(
+                fixedValueText: "-10",
+                operationValueText: "2.5",
+                operation: .add
+            ),
+            "-7.5"
+        )
+        XCTAssertEqual(
+            try CalculatorEngine.calculateBasic(
+                fixedValueText: "-10",
+                operationValueText: "-2",
+                operation: .multiply
+            ),
+            "20"
+        )
+    }
+
+    func testBasicDivisionByZeroIsRejected() {
+        XCTAssertThrowsError(
+            try CalculatorEngine.calculateBasic(
+                fixedValueText: "475",
+                operationValueText: "-0.0",
+                operation: .divide
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? CalculatorIssue,
+                .input(
+                    message: "进行除法时，运算值不能为 0。",
+                    field: .operationValue
+                )
+            )
+        }
+    }
+
     func testRoundHalfUp() throws {
         XCTAssertEqual(
             try CalculatorEngine.calculate(

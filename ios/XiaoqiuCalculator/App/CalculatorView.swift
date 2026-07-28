@@ -4,26 +4,27 @@ struct CalculatorView: View {
     @StateObject private var model = CalculatorViewModel()
     @FocusState private var focusedField: CalculatorField?
 
-    private let pageMaxWidth: CGFloat = 940
+    private let pageMaxWidth: CGFloat = 980
 
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                Color.appBackground
-                    .ignoresSafeArea()
+                Color.appBackground.ignoresSafeArea()
 
                 ScrollView {
                     VStack(spacing: 18) {
                         header
-                        adaptiveWorkspace(
-                            useWideLayout: geometry.size.width >= 760
-                        )
+                        pagePicker
+                        pageContent(useWideLayout: geometry.size.width >= 760)
                         statusBar
                         keyboardHint
                     }
                     .frame(maxWidth: pageMaxWidth)
-                    .padding(.horizontal, horizontalPadding(for: geometry.size.width))
-                    .padding(.vertical, geometry.size.width >= 760 ? 34 : 22)
+                    .padding(
+                        .horizontal,
+                        geometry.size.width >= 760 ? 32 : 20
+                    )
+                    .padding(.vertical, geometry.size.width >= 760 ? 30 : 20)
                     .frame(maxWidth: .infinity)
                 }
                 .scrollDismissesKeyboard(.interactively)
@@ -31,15 +32,16 @@ struct CalculatorView: View {
         }
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
-                Button("清空") {
+                Button(model.page == .counter ? "清零" : "清空") {
                     model.clear()
-                    focusedField = .a
                 }
                 Spacer()
-                Button("计算") {
-                    model.calculate()
+                if model.page != .counter {
+                    Button("计算") {
+                        model.calculate()
+                    }
+                    .fontWeight(.semibold)
                 }
-                .fontWeight(.semibold)
                 Button("完成") {
                     focusedField = nil
                 }
@@ -50,25 +52,15 @@ struct CalculatorView: View {
                 focusedField = field
             }
         }
-    }
-
-    private var header: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack(alignment: .center, spacing: 14) {
-                appIdentity
-                Spacer(minLength: 24)
-                divisorControl
-            }
-
-            VStack(alignment: .leading, spacing: 16) {
-                appIdentity
-                divisorControl
-                    .frame(maxWidth: 260, alignment: .leading)
-            }
+        .onChange(of: model.page) { _ in
+            focusedField = nil
+        }
+        .onChange(of: model.mode) { _ in
+            focusedField = nil
         }
     }
 
-    private var appIdentity: some View {
+    private var header: some View {
         HStack(spacing: 13) {
             ZStack {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -77,9 +69,8 @@ struct CalculatorView: View {
                         RoundedRectangle(cornerRadius: 14, style: .continuous)
                             .stroke(Color.accentBorder, lineWidth: 1)
                     }
-
-                Text("Σ")
-                    .font(.system(size: 23, weight: .bold, design: .rounded))
+                Text(headerSymbol)
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundStyle(Color.appAccent)
             }
             .frame(width: 48, height: 48)
@@ -89,83 +80,176 @@ struct CalculatorView: View {
                 Text("小秋计算器")
                     .font(.title2.weight(.bold))
                     .foregroundStyle(Color.primaryText)
-                Text("一次输入，同时得到总数与除法结果")
+                Text(model.subtitle)
                     .font(.subheadline)
                     .foregroundStyle(Color.mutedText)
             }
+            Spacer()
         }
     }
 
-    private var divisorControl: some View {
-        VStack(alignment: .trailing, spacing: 5) {
-            Text("可调除数")
-                .font(.caption)
-                .foregroundStyle(Color.faintText)
-                .frame(maxWidth: .infinity, alignment: .trailing)
+    private var headerSymbol: String {
+        switch model.page {
+        case .calculator:
+            return "Σ"
+        case .basic:
+            return "±"
+        case .counter:
+            return "+1"
+        }
+    }
 
-            calculatorField(
-                field: .divisor,
-                placeholder: CalculatorEngine.defaultDivisor,
-                alignment: .trailing,
-                accessibilityLabel: "自定义除数"
-            )
-            .frame(width: 150)
+    private var pagePicker: some View {
+        Picker("功能页面", selection: $model.page) {
+            ForEach(AppPage.allCases) { page in
+                Text(page.rawValue).tag(page)
+            }
+        }
+        .pickerStyle(.segmented)
+        .accessibilityHint("切换计算器、基础运算和快捷计数")
+    }
+
+    @ViewBuilder
+    private func pageContent(useWideLayout: Bool) -> some View {
+        switch model.page {
+        case .calculator:
+            calculatorPage(useWideLayout: useWideLayout)
+        case .basic:
+            basicPage(useWideLayout: useWideLayout)
+        case .counter:
+            counterPage
+        }
+    }
+
+    private func calculatorPage(useWideLayout: Bool) -> some View {
+        VStack(spacing: 16) {
+            Picker("计算模式", selection: $model.mode) {
+                ForEach(CalculatorMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: 460)
+
+            if model.mode == .standard {
+                standardWorkspace(useWideLayout: useWideLayout)
+            } else {
+                multiplyAddWorkspace(useWideLayout: useWideLayout)
+            }
         }
     }
 
     @ViewBuilder
-    private func adaptiveWorkspace(useWideLayout: Bool) -> some View {
+    private func standardWorkspace(useWideLayout: Bool) -> some View {
         if useWideLayout {
             HStack(alignment: .top, spacing: 18) {
                 VStack(spacing: 16) {
-                    inputCard
-                    actionButtons
+                    standardInputCard
+                    actionButtons(primaryTitle: "计算结果")
                 }
                 .frame(maxWidth: .infinity)
-
-                resultsSection
-                    .frame(maxWidth: .infinity)
+                standardResults.frame(maxWidth: .infinity)
             }
         } else {
             VStack(spacing: 16) {
-                inputCard
-                actionButtons
-                resultsSection
+                standardInputCard
+                actionButtons(primaryTitle: "计算结果")
+                standardResults
             }
         }
     }
 
-    private var inputCard: some View {
+    private var standardInputCard: some View {
         VStack(alignment: .leading, spacing: 16) {
-            sectionHeader(
-                title: "输入数据",
-                detail: "支持正负整数与小数"
+            sectionHeader(title: "双结果输入", detail: "实时计算")
+            numericInput(
+                field: .divisor,
+                title: "可调除数",
+                placeholder: CalculatorEngine.defaultDivisor
             )
-
             ViewThatFits(in: .horizontal) {
                 HStack(alignment: .top, spacing: 12) {
-                    inputField(
-                        field: .a,
-                        title: "A 数据",
-                        example: "例：120.5"
+                    numericInput(field: .a, title: "A 数据", placeholder: "120.5")
+                    numericInput(field: .b, title: "B 数据", placeholder: "475")
+                }
+                VStack(spacing: 14) {
+                    numericInput(field: .a, title: "A 数据", placeholder: "120.5")
+                    numericInput(field: .b, title: "B 数据", placeholder: "475")
+                }
+            }
+        }
+        .cardStyle()
+    }
+
+    private var standardResults: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader(title: "计算结果", detail: "最多保留 2 位小数")
+            resultCard(
+                title: "总数",
+                formula: "A + B",
+                value: model.totalResult,
+                featured: true
+            )
+            resultCard(
+                title: "单独结果",
+                formula: model.divideFormula,
+                value: model.dividedResult,
+                featured: false
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func multiplyAddWorkspace(useWideLayout: Bool) -> some View {
+        if useWideLayout {
+            HStack(alignment: .top, spacing: 18) {
+                VStack(spacing: 16) {
+                    multiplyAddInputCard
+                    actionButtons(primaryTitle: "计算结果")
+                }
+                .frame(maxWidth: .infinity)
+                multiplyAddResults.frame(maxWidth: .infinity)
+            }
+        } else {
+            VStack(spacing: 16) {
+                multiplyAddInputCard
+                actionButtons(primaryTitle: "计算结果")
+                multiplyAddResults
+            }
+        }
+    }
+
+    private var multiplyAddInputCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            sectionHeader(title: "乘加输入", detail: "系数默认 475")
+            numericInput(
+                field: .coefficient,
+                title: "系数",
+                placeholder: CalculatorEngine.defaultCoefficient
+            )
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 12) {
+                    numericInput(
+                        field: .multiplier,
+                        title: "乘数",
+                        placeholder: "2"
                     )
-                    inputField(
-                        field: .b,
-                        title: "B 数据",
-                        example: "例：475"
+                    numericInput(
+                        field: .addend,
+                        title: "加数",
+                        placeholder: "25"
                     )
                 }
-
                 VStack(spacing: 14) {
-                    inputField(
-                        field: .a,
-                        title: "A 数据",
-                        example: "例：120.5"
+                    numericInput(
+                        field: .multiplier,
+                        title: "乘数",
+                        placeholder: "2"
                     )
-                    inputField(
-                        field: .b,
-                        title: "B 数据",
-                        example: "例：475"
+                    numericInput(
+                        field: .addend,
+                        title: "加数",
+                        placeholder: "25"
                     )
                 }
             }
@@ -173,117 +257,173 @@ struct CalculatorView: View {
         .cardStyle()
     }
 
-    private func inputField(
+    private var multiplyAddResults: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader(title: "乘加结果", detail: "实时更新")
+            resultCard(
+                title: "计算结果",
+                formula: model.multiplyAddFormula,
+                value: model.multiplyAddResult,
+                featured: true
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func basicPage(useWideLayout: Bool) -> some View {
+        if useWideLayout {
+            HStack(alignment: .top, spacing: 18) {
+                VStack(spacing: 16) {
+                    basicInputCard
+                    actionButtons(primaryTitle: "计算结果")
+                }
+                .frame(maxWidth: .infinity)
+                basicResults.frame(maxWidth: .infinity)
+            }
+        } else {
+            VStack(spacing: 16) {
+                basicInputCard
+                actionButtons(primaryTitle: "计算结果")
+                basicResults
+            }
+        }
+    }
+
+    private var basicInputCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            sectionHeader(title: "基础运算", detail: "固定值默认 475")
+            numericInput(
+                field: .fixedValue,
+                title: "固定值",
+                placeholder: CalculatorEngine.defaultFixedValue
+            )
+            Picker("运算符", selection: $model.basicOperation) {
+                ForEach(BasicOperation.allCases) { operation in
+                    Text(operation.rawValue).tag(operation)
+                }
+            }
+            .pickerStyle(.segmented)
+            numericInput(
+                field: .operationValue,
+                title: "运算值",
+                placeholder: "25"
+            )
+        }
+        .cardStyle()
+    }
+
+    private var basicResults: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionHeader(title: "运算结果", detail: "实时更新")
+            resultCard(
+                title: "计算结果",
+                formula: model.basicFormula,
+                value: model.basicResult,
+                featured: true
+            )
+        }
+    }
+
+    private var counterPage: some View {
+        VStack(spacing: 18) {
+            VStack(spacing: 8) {
+                Text("当前计数")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.mutedText)
+                Text("\(model.counter)")
+                    .font(.system(size: 68, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.appAccent)
+                    .monospacedDigit()
+                    .minimumScaleFactor(0.45)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, minHeight: 116)
+            }
+            .cardStyle()
+
+            Button {
+                model.incrementCounter()
+            } label: {
+                Label("加 1", systemImage: "plus")
+                    .font(.title2.bold())
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(PrimaryActionButtonStyle(height: 64))
+            .keyboardShortcut(.space, modifiers: [])
+
+            Button {
+                model.resetCounter()
+            } label: {
+                Label("清零", systemImage: "arrow.counterclockwise")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(SecondaryActionButtonStyle())
+
+            Text("在 iPad 连接实体键盘时，可按空格快速加一")
+                .font(.caption)
+                .foregroundStyle(Color.faintText)
+        }
+        .frame(maxWidth: 620)
+    }
+
+    private func numericInput(
         field: CalculatorField,
         title: String,
-        example: String
+        placeholder: String
     ) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            HStack {
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.primaryText)
-                Spacer()
-                Text(example)
-                    .font(.caption)
-                    .foregroundStyle(Color.faintText)
-            }
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.primaryText)
 
-            calculatorField(
-                field: field,
-                placeholder: field == .a ? "例如 120.5" : "例如 475",
-                alignment: .trailing,
-                accessibilityLabel: title
+            TextField(
+                placeholder,
+                text: Binding(
+                    get: { model.text(for: field) },
+                    set: { model.update($0, for: field) }
+                )
             )
+            .font(.system(.title3, design: .rounded, weight: .medium))
+            .foregroundStyle(Color.primaryText)
+            .multilineTextAlignment(.trailing)
+            .keyboardType(.numbersAndPunctuation)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .focused($focusedField, equals: field)
+            .submitLabel(.done)
+            .onSubmit { model.calculate() }
+            .padding(.horizontal, 14)
+            .frame(height: 48)
+            .background(Color.surfaceAlt)
+            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .stroke(
+                        fieldBorderColor(field),
+                        lineWidth: fieldBorderWidth(field)
+                    )
+            }
+            .accessibilityLabel(title)
+            .accessibilityHint("最多输入 64 个字符，支持负数和小数")
         }
         .frame(maxWidth: .infinity)
     }
 
-    private func calculatorField(
-        field: CalculatorField,
-        placeholder: String,
-        alignment: TextAlignment,
-        accessibilityLabel: String
-    ) -> some View {
-        TextField(
-            placeholder,
-            text: Binding(
-                get: { model.text(for: field) },
-                set: { model.update($0, for: field) }
-            )
-        )
-        .font(.system(.title3, design: .rounded, weight: .medium))
-        .foregroundStyle(Color.primaryText)
-        .multilineTextAlignment(alignment)
-        .keyboardType(.numbersAndPunctuation)
-        .textInputAutocapitalization(.never)
-        .autocorrectionDisabled()
-        .focused($focusedField, equals: field)
-        .submitLabel(field == .a ? .next : .done)
-        .onSubmit {
-            if field == .a {
-                focusedField = .b
-            } else {
-                model.calculate()
-            }
-        }
-        .padding(.horizontal, 14)
-        .frame(height: 48)
-        .background(Color.surfaceAlt)
-        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .stroke(
-                    fieldBorderColor(field),
-                    lineWidth: fieldBorderWidth(field)
-                )
-        }
-        .accessibilityLabel(accessibilityLabel)
-        .accessibilityHint("最多输入 64 个字符，支持负数和小数")
-    }
-
-    private var actionButtons: some View {
+    private func actionButtons(primaryTitle: String) -> some View {
         HStack(spacing: 10) {
             Button {
                 model.clear()
-                focusedField = .a
             } label: {
-                Text("清空")
-                    .frame(maxWidth: .infinity)
+                Text("清空").frame(maxWidth: .infinity)
             }
             .buttonStyle(SecondaryActionButtonStyle())
 
             Button {
                 model.calculate()
             } label: {
-                Label("计算结果", systemImage: "equal")
+                Label(primaryTitle, systemImage: "equal")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(PrimaryActionButtonStyle())
-        }
-    }
-
-    private var resultsSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            sectionHeader(
-                title: "计算结果",
-                detail: "自动四舍五入至 2 位"
-            )
-
-            VStack(spacing: 10) {
-                resultCard(
-                    title: "总数",
-                    formula: "A + B",
-                    value: model.totalResult,
-                    featured: true
-                )
-                resultCard(
-                    title: "单独结果",
-                    formula: model.divideFormula,
-                    value: model.dividedResult,
-                    featured: false
-                )
-            }
         }
     }
 
@@ -310,9 +450,7 @@ struct CalculatorView: View {
                     .foregroundStyle(Color.mutedText)
                     .lineLimit(1)
             }
-
             Spacer(minLength: 12)
-
             Text(value)
                 .font(resultFont(for: value))
                 .foregroundStyle(
@@ -321,11 +459,11 @@ struct CalculatorView: View {
                         : (featured ? Color.appAccent : Color.primaryText)
                 )
                 .lineLimit(1)
-                .minimumScaleFactor(0.55)
+                .minimumScaleFactor(0.5)
                 .monospacedDigit()
         }
         .padding(.horizontal, 16)
-        .frame(minHeight: 82)
+        .frame(minHeight: 84)
         .background(Color.surface)
         .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
         .overlay {
@@ -344,7 +482,6 @@ struct CalculatorView: View {
                 .fill(statusForeground)
                 .frame(width: 8, height: 8)
                 .accessibilityHidden(true)
-
             Text(model.status)
                 .font(.footnote)
                 .foregroundStyle(statusForeground)
@@ -359,10 +496,14 @@ struct CalculatorView: View {
     }
 
     private var keyboardHint: some View {
-        Text("键盘工具栏可直接计算、清空或收起键盘")
-            .font(.caption)
-            .foregroundStyle(Color.faintText)
-            .frame(maxWidth: .infinity, alignment: .trailing)
+        Text(
+            model.page == .counter
+                ? "快捷计数仅在此页面响应空格键"
+                : "输入完整后会实时计算，也可点按钮明确校验"
+        )
+        .font(.caption)
+        .foregroundStyle(Color.faintText)
+        .frame(maxWidth: .infinity, alignment: .trailing)
     }
 
     private func sectionHeader(title: String, detail: String) -> some View {
@@ -377,18 +518,11 @@ struct CalculatorView: View {
         }
     }
 
-    private func horizontalPadding(for width: CGFloat) -> CGFloat {
-        width >= 760 ? 32 : 20
-    }
-
     private func fieldBorderColor(_ field: CalculatorField) -> Color {
         if model.invalidField == field {
             return .errorText
         }
-        if focusedField == field {
-            return .appAccent
-        }
-        return .border
+        return focusedField == field ? .appAccent : .border
     }
 
     private func fieldBorderWidth(_ field: CalculatorField) -> CGFloat {
@@ -429,12 +563,14 @@ struct CalculatorView: View {
 }
 
 private struct PrimaryActionButtonStyle: ButtonStyle {
+    var height: CGFloat = 50
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.headline)
             .foregroundStyle(Color.accentButtonText)
             .padding(.horizontal, 16)
-            .frame(height: 50)
+            .frame(height: height)
             .background(
                 configuration.isPressed
                     ? Color.accentHover
@@ -454,9 +590,7 @@ private struct SecondaryActionButtonStyle: ButtonStyle {
             .padding(.horizontal, 16)
             .frame(height: 50)
             .background(
-                configuration.isPressed
-                    ? Color.surfaceAlt
-                    : Color.surface
+                configuration.isPressed ? Color.surfaceAlt : Color.surface
             )
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay {
