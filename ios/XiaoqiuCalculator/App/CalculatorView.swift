@@ -1,8 +1,11 @@
 import SwiftUI
+import UIKit
 
 struct CalculatorView: View {
     @StateObject private var model = CalculatorViewModel()
     @FocusState private var focusedField: CalculatorField?
+    @Environment(\.accessibilityReduceTransparency)
+    private var reduceTransparency
 
     private let pageMaxWidth: CGFloat = 1_180
 
@@ -16,7 +19,9 @@ struct CalculatorView: View {
                 : 0
 
             ZStack {
-                Color.appBackground.ignoresSafeArea()
+                LiquidGlassBackdrop(
+                    reduceTransparency: reduceTransparency
+                )
 
                 ScrollView {
                     VStack(spacing: useWideLayout ? 20 : 16) {
@@ -45,6 +50,14 @@ struct CalculatorView: View {
             }
         }
         .tint(Color.appAccent)
+        .animation(
+            .spring(response: 0.34, dampingFraction: 0.82),
+            value: model.page
+        )
+        .animation(
+            .spring(response: 0.3, dampingFraction: 0.84),
+            value: model.mode
+        )
         .toolbar {
             ToolbarItemGroup(placement: .keyboard) {
                 Button(model.page == .counter ? "清零" : "清空") {
@@ -78,19 +91,17 @@ struct CalculatorView: View {
     private var header: some View {
         HStack(spacing: 13) {
             ZStack {
-                RoundedRectangle(cornerRadius: 15, style: .continuous)
-                    .fill(Color.surface)
-                    .shadow(
-                        color: Color.shadowTint,
-                        radius: 10,
-                        x: 0,
-                        y: 4
-                    )
                 Text(headerSymbol)
                     .font(.system(size: 21, weight: .bold, design: .rounded))
                     .foregroundStyle(Color.appAccent)
             }
             .frame(width: 50, height: 50)
+            .adaptiveGlassSurface(
+                cornerRadius: 16,
+                tint: Color.appAccent.opacity(0.08),
+                interactive: false,
+                reduceTransparency: reduceTransparency
+            )
             .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 3) {
@@ -115,13 +126,10 @@ struct CalculatorView: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(Color.surface)
-            .clipShape(Capsule())
-            .shadow(
-                color: Color.shadowTint,
-                radius: 8,
-                x: 0,
-                y: 3
+            .adaptiveGlassSurface(
+                cornerRadius: 18,
+                interactive: false,
+                reduceTransparency: reduceTransparency
             )
         }
     }
@@ -138,46 +146,56 @@ struct CalculatorView: View {
     }
 
     private var pagePicker: some View {
-        HStack(spacing: 4) {
-            ForEach(AppPage.allCases) { page in
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        model.page = page
-                    }
-                } label: {
-                    Text(page.rawValue)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(
-                            model.page == page
-                                ? Color.primaryText
-                                : Color.mutedText
-                        )
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 11)
-                        .background {
-                            if model.page == page {
-                                RoundedRectangle(
-                                    cornerRadius: 13,
-                                    style: .continuous
-                                )
-                                .fill(Color.surface)
-                                .shadow(
-                                    color: Color.shadowTint,
-                                    radius: 7,
-                                    x: 0,
-                                    y: 3
-                                )
-                            }
+        AdaptiveGlassContainer(spacing: 4) {
+            HStack(spacing: 4) {
+                ForEach(AppPage.allCases) { page in
+                    Button {
+                        withAnimation(
+                            .spring(
+                                response: 0.3,
+                                dampingFraction: 0.82
+                            )
+                        ) {
+                            model.page = page
                         }
+                    } label: {
+                        Text(page.rawValue)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(
+                                model.page == page
+                                    ? Color.primaryText
+                                    : Color.mutedText
+                            )
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 11)
+                            .background {
+                                if model.page == page {
+                                    RoundedRectangle(
+                                        cornerRadius: 14,
+                                        style: .continuous
+                                    )
+                                    .fill(Color.selectionFill)
+                                    .shadow(
+                                        color: Color.shadowTint,
+                                        radius: 7,
+                                        x: 0,
+                                        y: 3
+                                    )
+                                }
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(page.rawValue)
+                    .accessibilityHint("切换到\(page.rawValue)")
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel(page.rawValue)
-                .accessibilityHint("切换到\(page.rawValue)")
             }
         }
-        .padding(4)
-        .background(Color.controlBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 17, style: .continuous))
+        .padding(5)
+        .adaptiveGlassSurface(
+            cornerRadius: 20,
+            interactive: false,
+            reduceTransparency: reduceTransparency
+        )
         .accessibilityElement(children: .contain)
     }
 
@@ -229,44 +247,54 @@ struct CalculatorView: View {
     }
 
     private var modePicker: some View {
-        HStack(spacing: 4) {
-            ForEach(CalculatorMode.allCases) { mode in
-                Button {
-                    withAnimation(.easeInOut(duration: 0.18)) {
-                        model.mode = mode
-                    }
-                } label: {
-                    Text(mode.rawValue)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(
-                            model.mode == mode
-                                ? Color.primaryText
-                                : Color.mutedText
-                        )
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 10)
-                        .background {
-                            if model.mode == mode {
-                                RoundedRectangle(
-                                    cornerRadius: 12,
-                                    style: .continuous
-                                )
-                                .fill(Color.surface)
-                                .shadow(
-                                    color: Color.shadowTint,
-                                    radius: 6,
-                                    x: 0,
-                                    y: 2
-                                )
-                            }
+        AdaptiveGlassContainer(spacing: 4) {
+            HStack(spacing: 4) {
+                ForEach(CalculatorMode.allCases) { mode in
+                    Button {
+                        withAnimation(
+                            .spring(
+                                response: 0.3,
+                                dampingFraction: 0.82
+                            )
+                        ) {
+                            model.mode = mode
                         }
+                    } label: {
+                        Text(mode.rawValue)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(
+                                model.mode == mode
+                                    ? Color.primaryText
+                                    : Color.mutedText
+                            )
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background {
+                                if model.mode == mode {
+                                    RoundedRectangle(
+                                        cornerRadius: 13,
+                                        style: .continuous
+                                    )
+                                    .fill(Color.selectionFill)
+                                    .shadow(
+                                        color: Color.shadowTint,
+                                        radius: 6,
+                                        x: 0,
+                                        y: 2
+                                    )
+                                }
+                            }
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
         }
-        .padding(4)
-        .background(Color.controlBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(5)
+        .adaptiveGlassSurface(
+            cornerRadius: 19,
+            interactive: false,
+            reduceTransparency: reduceTransparency
+        )
     }
 
     @ViewBuilder
@@ -330,7 +358,7 @@ struct CalculatorView: View {
             actionButtons(primaryTitle: "计算结果")
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .cardStyle()
+        .cardStyle(reduceTransparency: reduceTransparency)
     }
 
     private func standardResults(useWideLayout: Bool) -> some View {
@@ -370,7 +398,7 @@ struct CalculatorView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .cardStyle()
+        .cardStyle(reduceTransparency: reduceTransparency)
     }
 
     private func multiplyAddInputPanel(useWideLayout: Bool) -> some View {
@@ -419,7 +447,7 @@ struct CalculatorView: View {
             actionButtons(primaryTitle: "计算结果")
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .cardStyle()
+        .cardStyle(reduceTransparency: reduceTransparency)
     }
 
     private var multiplyAddResults: some View {
@@ -434,7 +462,7 @@ struct CalculatorView: View {
             )
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .cardStyle()
+        .cardStyle(reduceTransparency: reduceTransparency)
     }
 
     @ViewBuilder
@@ -505,7 +533,7 @@ struct CalculatorView: View {
             actionButtons(primaryTitle: "计算结果")
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .cardStyle()
+        .cardStyle(reduceTransparency: reduceTransparency)
     }
 
     @ViewBuilder
@@ -587,7 +615,7 @@ struct CalculatorView: View {
             )
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .cardStyle()
+        .cardStyle(reduceTransparency: reduceTransparency)
     }
 
     private func historyPanel(useWideLayout: Bool) -> some View {
@@ -646,14 +674,13 @@ struct CalculatorView: View {
             maxHeight: useWideLayout ? .infinity : nil,
             alignment: .topLeading
         )
-        .background(Color.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(Color.border, lineWidth: 1)
-        }
-        .shadow(color: Color.shadowTint, radius: 12, x: 0, y: 5)
-        .contentShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .adaptiveGlassSurface(
+            cornerRadius: 28,
+            tint: Color.historyGlassTint,
+            interactive: true,
+            reduceTransparency: reduceTransparency
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
         .onTapGesture {
             withAnimation(.easeOut(duration: 0.18)) {
                 model.clearHistory()
@@ -732,10 +759,9 @@ struct CalculatorView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .buttonStyle(
-                PrimaryActionButtonStyle(
-                    height: useWideLayout ? 210 : 116
-                )
+            .adaptivePrimaryAction(
+                height: useWideLayout ? 210 : 116,
+                reduceTransparency: reduceTransparency
             )
             .keyboardShortcut(.space, modifiers: [])
             .accessibilityHint("每次点击使当前计数增加一")
@@ -805,7 +831,7 @@ struct CalculatorView: View {
                 .frame(maxWidth: .infinity)
         }
         .frame(maxWidth: .infinity)
-        .cardStyle()
+        .cardStyle(reduceTransparency: reduceTransparency)
     }
 
     private var panelDivider: some View {
@@ -859,22 +885,30 @@ struct CalculatorView: View {
     }
 
     private func actionButtons(primaryTitle: String) -> some View {
-        HStack(spacing: 12) {
-            Button {
-                model.clear()
-            } label: {
-                Text("清空")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(SecondaryActionButtonStyle(height: 56))
+        AdaptiveGlassContainer(spacing: 12) {
+            HStack(spacing: 12) {
+                Button {
+                    model.clear()
+                } label: {
+                    Text("清空")
+                        .frame(maxWidth: .infinity)
+                }
+                .adaptiveSecondaryAction(
+                    height: 56,
+                    reduceTransparency: reduceTransparency
+                )
 
-            Button {
-                model.calculate()
-            } label: {
-                Label(primaryTitle, systemImage: "equal")
-                    .frame(maxWidth: .infinity)
+                Button {
+                    model.calculate()
+                } label: {
+                    Label(primaryTitle, systemImage: "equal")
+                        .frame(maxWidth: .infinity)
+                }
+                .adaptivePrimaryAction(
+                    height: 56,
+                    reduceTransparency: reduceTransparency
+                )
             }
-            .buttonStyle(PrimaryActionButtonStyle(height: 56))
         }
     }
 
@@ -942,8 +976,13 @@ struct CalculatorView: View {
         }
         .padding(.horizontal, 15)
         .padding(.vertical, 12)
-        .background(statusBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+        .adaptiveGlassSurface(
+            cornerRadius: 16,
+            tint: statusGlassTint,
+            interactive: false,
+            reduceTransparency: reduceTransparency,
+            fallbackColor: statusBackground
+        )
         .animation(.easeOut(duration: 0.18), value: model.status)
         .accessibilityLabel("状态：\(model.status)")
     }
@@ -1013,6 +1052,112 @@ struct CalculatorView: View {
             return .errorSoft
         }
     }
+
+    private var statusGlassTint: Color? {
+        switch model.statusTone {
+        case .neutral:
+            return nil
+        case .success:
+            return .successText.opacity(0.08)
+        case .error:
+            return .errorText.opacity(0.08)
+        }
+    }
+}
+
+private struct LiquidGlassBackdrop: View {
+    let reduceTransparency: Bool
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                LinearGradient(
+                    colors: [
+                        Color.backdropTop,
+                        Color.appBackground,
+                        Color.backdropBottom
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+
+                if !reduceTransparency {
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [
+                                    Color.appAccent.opacity(0.26),
+                                    Color.appAccent.opacity(0)
+                                ],
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: geometry.size.width * 0.42
+                            )
+                        )
+                        .frame(
+                            width: geometry.size.width * 0.9,
+                            height: geometry.size.width * 0.9
+                        )
+                        .offset(
+                            x: geometry.size.width * 0.38,
+                            y: -geometry.size.height * 0.34
+                        )
+                        .blur(radius: 28)
+
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [
+                                    Color.coolGlow.opacity(0.2),
+                                    Color.coolGlow.opacity(0)
+                                ],
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: geometry.size.width * 0.38
+                            )
+                        )
+                        .frame(
+                            width: geometry.size.width * 0.84,
+                            height: geometry.size.width * 0.84
+                        )
+                        .offset(
+                            x: -geometry.size.width * 0.4,
+                            y: geometry.size.height * 0.28
+                        )
+                        .blur(radius: 32)
+                }
+            }
+        }
+        .ignoresSafeArea()
+        .accessibilityHidden(true)
+    }
+}
+
+private struct AdaptiveGlassContainer<Content: View>: View {
+    let spacing: CGFloat
+    let content: Content
+
+    @Environment(\.accessibilityReduceTransparency)
+    private var reduceTransparency
+
+    init(
+        spacing: CGFloat,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.spacing = spacing
+        self.content = content()
+    }
+
+    @ViewBuilder
+    var body: some View {
+        if #available(iOS 26.0, *), !reduceTransparency {
+            GlassEffectContainer(spacing: spacing) {
+                content
+            }
+        } else {
+            content
+        }
+    }
 }
 
 private struct PrimaryActionButtonStyle: ButtonStyle {
@@ -1076,38 +1221,150 @@ private struct SecondaryActionButtonStyle: ButtonStyle {
 }
 
 private extension View {
-    func cardStyle() -> some View {
-        padding(22)
-            .background(Color.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .stroke(Color.border, lineWidth: 1)
+    @ViewBuilder
+    func adaptiveGlassSurface(
+        cornerRadius: CGFloat,
+        tint: Color? = nil,
+        interactive: Bool,
+        reduceTransparency: Bool,
+        fallbackColor: Color = .surface
+    ) -> some View {
+        if #available(iOS 26.0, *), !reduceTransparency {
+            if let tint {
+                if interactive {
+                    glassEffect(
+                        .regular.tint(tint).interactive(),
+                        in: .rect(cornerRadius: cornerRadius)
+                    )
+                } else {
+                    glassEffect(
+                        .regular.tint(tint),
+                        in: .rect(cornerRadius: cornerRadius)
+                    )
+                }
+            } else if interactive {
+                glassEffect(
+                    .regular.interactive(),
+                    in: .rect(cornerRadius: cornerRadius)
+                )
+            } else {
+                glassEffect(
+                    .regular,
+                    in: .rect(cornerRadius: cornerRadius)
+                )
             }
-            .shadow(color: Color.shadowTint, radius: 12, x: 0, y: 5)
+        } else {
+            background(fallbackColor)
+                .clipShape(
+                    RoundedRectangle(
+                        cornerRadius: cornerRadius,
+                        style: .continuous
+                    )
+                )
+                .overlay {
+                    RoundedRectangle(
+                        cornerRadius: cornerRadius,
+                        style: .continuous
+                    )
+                    .stroke(Color.border, lineWidth: 1)
+                }
+                .shadow(
+                    color: Color.shadowTint,
+                    radius: 12,
+                    x: 0,
+                    y: 5
+                )
+        }
+    }
+
+    @ViewBuilder
+    func adaptivePrimaryAction(
+        height: CGFloat,
+        reduceTransparency: Bool
+    ) -> some View {
+        if #available(iOS 26.0, *), !reduceTransparency {
+            font(.headline)
+                .frame(height: height)
+                .buttonStyle(.glassProminent)
+                .tint(Color.appAccent)
+        } else {
+            buttonStyle(PrimaryActionButtonStyle(height: height))
+        }
+    }
+
+    @ViewBuilder
+    func adaptiveSecondaryAction(
+        height: CGFloat,
+        reduceTransparency: Bool
+    ) -> some View {
+        if #available(iOS 26.0, *), !reduceTransparency {
+            font(.headline)
+                .frame(height: height)
+                .buttonStyle(.glass)
+                .tint(Color.primaryText)
+        } else {
+            buttonStyle(SecondaryActionButtonStyle(height: height))
+        }
+    }
+
+    func cardStyle(reduceTransparency: Bool) -> some View {
+        padding(22)
+            .adaptiveGlassSurface(
+                cornerRadius: 28,
+                interactive: false,
+                reduceTransparency: reduceTransparency
+            )
     }
 }
 
 private extension Color {
-    static let appBackground = Color(hex: 0xF5F5F3)
-    static let surface = Color(hex: 0xFFFFFF)
-    static let surfaceAlt = Color(hex: 0xF6F6F4)
-    static let controlBackground = Color(hex: 0xEAEAE7)
-    static let border = Color(hex: 0xE1E1DE)
-    static let primaryText = Color(hex: 0x171717)
-    static let mutedText = Color(hex: 0x6F7074)
-    static let faintText = Color(hex: 0x96979B)
+    static let appBackground = Color(light: 0xF4F3F0, dark: 0x121314)
+    static let backdropTop = Color(light: 0xFFF8F1, dark: 0x211A16)
+    static let backdropBottom = Color(light: 0xEFF4F6, dark: 0x10191D)
+    static let coolGlow = Color(light: 0x7CCDE3, dark: 0x3E91A9)
+    static let surface = Color(light: 0xFDFDFC, dark: 0x252628)
+    static let surfaceAlt = Color(light: 0xF5F4F1, dark: 0x303134)
+    static let controlBackground = Color(
+        light: 0xE8E7E3,
+        dark: 0x2C2D2F
+    )
+    static let selectionFill = Color(
+        light: 0xFFFFFF,
+        dark: 0x3A3B3E
+    ).opacity(0.82)
+    static let historyGlassTint = Color(
+        light: 0xFFFFFF,
+        dark: 0x202123
+    ).opacity(0.12)
+    static let border = Color(light: 0xDEDDD8, dark: 0x45474A)
+    static let primaryText = Color(light: 0x171717, dark: 0xF6F4F1)
+    static let mutedText = Color(light: 0x6F7074, dark: 0xB6B7BA)
+    static let faintText = Color(light: 0x96979B, dark: 0x86878B)
     static let appAccent = Color(hex: 0xFF7500)
     static let accentHover = Color(hex: 0xE96900)
     static let accentButtonText = Color.white
-    static let accentSoft = Color(hex: 0xFFF0E3)
-    static let accentBorder = Color(hex: 0xFFC68F)
-    static let successText = Color(hex: 0x31825B)
-    static let successSoft = Color(hex: 0xEAF7EF)
-    static let errorText = Color(hex: 0xC74B4B)
-    static let errorSoft = Color(hex: 0xFCEEEE)
-    static let shadowTint = Color.black.opacity(0.07)
+    static let accentSoft = Color(light: 0xFFF0E3, dark: 0x432819)
+    static let accentBorder = Color(light: 0xFFC68F, dark: 0x955426)
+    static let successText = Color(light: 0x31825B, dark: 0x6ED2A0)
+    static let successSoft = Color(light: 0xEAF7EF, dark: 0x173629)
+    static let errorText = Color(light: 0xC74B4B, dark: 0xF08A8A)
+    static let errorSoft = Color(light: 0xFCEEEE, dark: 0x402222)
+    static let shadowTint = Color.black.opacity(0.1)
     static let accentShadow = Color(hex: 0xFF7500).opacity(0.22)
+
+    init(light: UInt32, dark: UInt32) {
+        self.init(
+            uiColor: UIColor { traits in
+                let hex = traits.userInterfaceStyle == .dark ? dark : light
+                return UIColor(
+                    red: CGFloat((hex >> 16) & 0xFF) / 255,
+                    green: CGFloat((hex >> 8) & 0xFF) / 255,
+                    blue: CGFloat(hex & 0xFF) / 255,
+                    alpha: 1
+                )
+            }
+        )
+    }
 
     init(hex: UInt32) {
         self.init(
